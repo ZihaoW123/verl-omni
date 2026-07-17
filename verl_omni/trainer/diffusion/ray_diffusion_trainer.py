@@ -65,6 +65,7 @@ from verl_omni.trainer.diffusion.diffusion_metric_utils import (
     compute_timing_metrics_diffusion,
 )
 from verl_omni.trainer.diffusion.diffusion_trainer_utils import NoOpCheckpointManager, old_policy_decay
+from verl_omni.trainer.diffusion.generation_logging import prepare_visual_outputs
 from verl_omni.trainer.diffusion.rollout_correction import (
     apply_bypass_mode_to_diffusion_batch,
     apply_rollout_correction_to_diffusion_batch,
@@ -282,12 +283,25 @@ class BaseRayDiffusionTrainer(ABC):
         os.makedirs(visual_folder, exist_ok=True)
 
         output_paths = []
-        images_pil = outputs.cpu().float().permute(0, 2, 3, 1).numpy()
-        images_pil = (images_pil * 255).round().clip(0, 255).astype("uint8")
-        for i, image in enumerate(images_pil):
-            image_path = os.path.join(visual_folder, f"{i}.jpg")
-            Image.fromarray(image).save(image_path)
-            output_paths.append(image_path)
+        media_type, visual_outputs = prepare_visual_outputs(outputs)
+        if media_type == "image":
+            for i, image in enumerate(visual_outputs):
+                image_path = os.path.join(visual_folder, f"{i}.jpg")
+                Image.fromarray(image).save(image_path)
+                output_paths.append(image_path)
+        else:
+            from diffusers.utils import export_to_video
+
+            frame_rate = OmegaConf.select(
+                self.config,
+                "actor_rollout_ref.rollout.pipeline.frame_rate",
+                default=8,
+            )
+            fps = max(1, round(float(frame_rate or 8)))
+            for i, video in enumerate(visual_outputs):
+                video_path = os.path.join(visual_folder, f"{i}.mp4")
+                export_to_video([Image.fromarray(frame) for frame in video], video_path, fps=fps)
+                output_paths.append(video_path)
 
         filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
 

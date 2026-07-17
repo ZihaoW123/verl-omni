@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import torch
 from tensordict import TensorDict
 
-from verl_omni.pipelines.ltx2_flow_grpo.agent_loop import _messages_to_text
+from verl_omni.pipelines.ltx2_flow_grpo.agent_loop import LTX2DiffusionSingleTurnAgentLoop, _messages_to_text
 from verl_omni.pipelines.ltx2_flow_grpo.common import (
     LTX2_LORA_TARGET_MODULES,
     apply_x0_cfg,
@@ -62,6 +62,28 @@ def test_ltx2_raw_prompt_and_reward_media_normalization() -> None:
 
     thwc = torch.zeros(3, 8, 10, 3)
     assert _to_tchw(thwc).shape == (3, 3, 8, 10)
+
+
+def test_ltx2_agent_loop_init_skips_chat_template_initialization() -> None:
+    class StrictAlternatingTokenizer:
+        def apply_chat_template(self, *args, **kwargs):
+            raise RuntimeError("Conversation roles must alternate user/assistant/user/assistant/...")
+
+    config = SimpleNamespace(
+        actor_rollout_ref=SimpleNamespace(
+            rollout=SimpleNamespace(prompt_length=1024),
+        )
+    )
+    loop = LTX2DiffusionSingleTurnAgentLoop(
+        trainer_config=SimpleNamespace(config=config),
+        server_manager=object(),
+        tokenizer=StrictAlternatingTokenizer(),
+        processor=None,
+        dataset_cls=object,
+        data_config=SimpleNamespace(config={}),
+    )
+
+    assert loop.system_prompt == []
 
 
 def test_ltx2_training_adapter_splits_joint_latents() -> None:
@@ -128,10 +150,12 @@ def test_vllm_omni_server_forwards_audio_for_rewards() -> None:
     server.global_steps = 7
     final_result = SimpleNamespace(
         images=[torch.zeros(3, 3, 8, 8)],
-        custom_output={"all_latents": torch.ones(1, 2, 4, 8)},
+        custom_output={
+            "all_latents": torch.ones(1, 2, 4, 8),
+            "audio_sample_rate": 48_000,
+        },
         multimodal_output={
             "audio": torch.ones(1, 1, 32),
-            "audio_sample_rate": 48_000,
         },
         request_output=None,
     )
