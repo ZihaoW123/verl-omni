@@ -7,6 +7,8 @@ MODEL_PATH=${MODEL_PATH:-dg845/LTX-2.3-Diffusers}
 DATA_DIR=${DATA_DIR:-$WORKSPACE/data/vid_prompt/verl_omni}
 NUM_GPUS=${NUM_GPUS:-8}
 ROLLOUT_TP=${ROLLOUT_TP:-$NUM_GPUS}
+REWARD_DEVICE=${REWARD_DEVICE:-cuda}
+REWARD_NUM_WORKERS=${REWARD_NUM_WORKERS:-1}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-15}
 
 train_path=$DATA_DIR/train.parquet
@@ -51,8 +53,8 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.model.lora_alpha=128 \
     actor_rollout_ref.model.target_modules="$ltx_lora_targets" \
     actor_rollout_ref.model.fsdp_layer_prefixes="['transformer_blocks.']" \
-    actor_rollout_ref.actor.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap=[LTX2VideoTransformerBlock] \
     actor_rollout_ref.actor.strategy=fsdp \
+    '+actor_rollout_ref.actor.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap=[LTX2VideoTransformerBlock]' \
     actor_rollout_ref.actor.optim.lr=3e-4 \
     actor_rollout_ref.actor.optim.weight_decay=1e-4 \
     actor_rollout_ref.actor.optim.betas="[0.9,0.999]" \
@@ -97,7 +99,7 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.rollout.val_kwargs.pipeline.guidance_scale=4.0 \
     actor_rollout_ref.rollout.val_kwargs.algo.noise_level=0.0 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
-    reward.num_workers=$NUM_GPUS \
+    reward.num_workers=$REWARD_NUM_WORKERS \
     reward.reward_model.enable=False \
     reward.custom_reward_function.path=pkg://verl_omni.reward_loop.reward_manager.multi \
     reward.custom_reward_function.name=_multi_reward_placeholder \
@@ -106,14 +108,14 @@ python3 -m verl_omni.trainer.main_diffusion \
     "+reward.reward_functions.clap.path=$repo_root/verl_omni/utils/reward_score/ltx2_clap.py" \
     '+reward.reward_functions.clap.name=compute_score_clap' \
     '+reward.reward_functions.clap.weight=1.0' \
-    '+reward.reward_functions.clap.device=cuda' \
+    "+reward.reward_functions.clap.device=$REWARD_DEVICE" \
     '+reward.reward_functions.clap.model_name_or_path=laion/larger_clap_general' \
     "+reward.reward_functions.imagebind.path=$repo_root/verl_omni/utils/reward_score/ltx2_imagebind.py" \
     '+reward.reward_functions.imagebind.name=compute_score_imagebind_audio_video' \
     '+reward.reward_functions.imagebind.weight=1.0' \
-    '+reward.reward_functions.imagebind.device=cuda' \
+    "+reward.reward_functions.imagebind.device=$REWARD_DEVICE" \
     reward.aggregation=weighted_sum \
-    trainer.logger='["console","tensorboard"]' \
+    trainer.logger='["console","tensorboard","wandb"]' \
     trainer.project_name=flow_grpo \
     trainer.experiment_name=ltx2_3_t2av_lora \
     trainer.default_local_dir=$checkpoint_dir \

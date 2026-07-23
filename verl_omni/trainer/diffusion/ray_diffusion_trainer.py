@@ -29,7 +29,6 @@ import numpy as np
 import ray
 import torch
 from omegaconf import OmegaConf, open_dict
-from PIL import Image
 from torch.utils.data import Dataset, Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
@@ -65,6 +64,7 @@ from verl_omni.trainer.diffusion.diffusion_metric_utils import (
     compute_timing_metrics_diffusion,
 )
 from verl_omni.trainer.diffusion.diffusion_trainer_utils import NoOpCheckpointManager, old_policy_decay
+from verl_omni.trainer.diffusion.generation_logging import batch_items, save_visual_outputs
 from verl_omni.trainer.diffusion.rollout_correction import (
     apply_bypass_mode_to_diffusion_batch,
     apply_rollout_correction_to_diffusion_batch,
@@ -275,21 +275,35 @@ class BaseRayDiffusionTrainer(ABC):
         except Exception as e:
             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
 
-    def _dump_generations(self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path):
+    def _generation_fps(self) -> int:
+        frame_rate = OmegaConf.select(
+            self.config,
+            "actor_rollout_ref.rollout.pipeline.frame_rate",
+            default=8,
+        )
+        return max(1, round(float(frame_rate or 8)))
+
+    def _dump_generations(
+        self,
+        inputs,
+        outputs,
+        gts,
+        scores,
+        reward_extra_infos_dict,
+        dump_path,
+        audios=None,
+        audio_sample_rates=None,
+    ):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
-        output_paths = ["skipped_image"] * len(inputs)
-
-        # visual_folder = os.path.join(dump_path, f"{self.global_steps}")
-        # os.makedirs(visual_folder, exist_ok=True)
-
-        # output_paths = []
-        # images_pil = outputs.cpu().float().permute(0, 2, 3, 1).numpy()
-        # images_pil = (images_pil * 255).round().clip(0, 255).astype("uint8")
-        # for i, image in enumerate(images_pil):
-        #     image_path = os.path.join(visual_folder, f"{i}.jpg")
-        #     Image.fromarray(image).save(image_path)
-        #     output_paths.append(image_path)
+        visual_folder = os.path.join(dump_path, f"{self.global_steps}")
+        _, output_paths = save_visual_outputs(
+            outputs,
+            visual_folder,
+            fps=self._generation_fps(),
+            audios=audios,
+            audio_sample_rates=audio_sample_rates,
+        )
 
         filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
 
@@ -329,6 +343,8 @@ class BaseRayDiffusionTrainer(ABC):
         with marked_timer("dump_rollout_generations", timing_raw, color="green"):
             inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
             outputs = batch.batch["responses"]
+            audios = batch.batch.get("audio", None)
+            audio_sample_rates = batch.non_tensor_batch.get("audio_sample_rate", None)
             scores = batch.batch["sample_level_scores"].sum(-1).cpu().tolist()
             sample_gts = [item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None) for item in batch]
 
@@ -348,9 +364,11 @@ class BaseRayDiffusionTrainer(ABC):
                 scores=scores,
                 reward_extra_infos_dict=reward_extra_infos_to_dump,
                 dump_path=rollout_data_dir,
+                audios=audios,
+                audio_sample_rates=audio_sample_rates,
             )
 
-    def _maybe_log_val_generations(self, inputs, outputs, scores):
+    def _maybe_log_val_generations(self, inputs, outputs, scores, audios=None, audio_sample_rates=None):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
         generations_to_log = self.config.trainer.log_val_generations
@@ -360,12 +378,9 @@ class BaseRayDiffusionTrainer(ABC):
 
         import numpy as np
 
-        # Create tuples of (input, output, score) and sort by input text
-        if "wandb" in self.config.trainer.logger:
-            import wandb
-
-            outputs = [wandb.Image(image.float(), file_type="jpg") for image in outputs]
-        samples = list(zip(inputs, outputs, scores, strict=True))
+        audios = batch_items(audios, len(inputs), "audio")
+        audio_sample_rates = batch_items(audio_sample_rates, len(inputs), "audio_sample_rate")
+        samples = list(zip(inputs, outputs, scores, audios, audio_sample_rates, strict=True))
         samples.sort(key=lambda x: x[0])  # Sort by input text
 
         # Use fixed random seed for deterministic shuffling
@@ -374,6 +389,31 @@ class BaseRayDiffusionTrainer(ABC):
 
         # Take first N samples after shuffling
         samples = samples[:generations_to_log]
+
+        if "wandb" in self.config.trainer.logger:
+            import wandb
+
+            media_root = self.config.trainer.get("validation_data_dir", None)
+            if not media_root:
+                media_root = os.path.join(self.config.trainer.default_local_dir, "validation_media")
+            media_dir = os.path.join(media_root, "wandb", str(self.global_steps))
+            media_type, media_paths = save_visual_outputs(
+                torch.stack([sample[1] for sample in samples]),
+                media_dir,
+                fps=self._generation_fps(),
+                audios=[sample[3] for sample in samples],
+                audio_sample_rates=[sample[4] for sample in samples],
+            )
+            if media_type == "video":
+                media_outputs = [wandb.Video(path, format="mp4") for path in media_paths]
+            else:
+                media_outputs = [wandb.Image(path) for path in media_paths]
+            samples = [
+                (sample[0], media_output, sample[2])
+                for sample, media_output in zip(samples, media_outputs, strict=True)
+            ]
+        else:
+            samples = [(sample[0], sample[1], sample[2]) for sample in samples]
 
         # Log to each configured logger
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
@@ -409,6 +449,8 @@ class BaseRayDiffusionTrainer(ABC):
         # Lists to collect samples for the table
         sample_inputs = []
         sample_outputs = []
+        sample_audios = []
+        sample_audio_sample_rates = []
         sample_gts = []
         sample_scores = []
         sample_turns = []
@@ -463,6 +505,15 @@ class BaseRayDiffusionTrainer(ABC):
             # Store generated outputs
             output_images = test_output_gen_batch.batch["responses"]
             sample_outputs.append(output_images)
+            batch_size = len(output_images)
+            sample_audios.extend(batch_items(test_output_gen_batch.batch.get("audio", None), batch_size, "audio"))
+            sample_audio_sample_rates.extend(
+                batch_items(
+                    test_output_gen_batch.non_tensor_batch.get("audio_sample_rate", None),
+                    batch_size,
+                    "audio_sample_rate",
+                )
+            )
 
             test_batch = test_batch.union(test_output_gen_batch)
             test_batch.meta_info["validate"] = True
@@ -495,7 +546,13 @@ class BaseRayDiffusionTrainer(ABC):
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
         sample_outputs = torch.cat(sample_outputs, dim=0)
-        self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
+        self._maybe_log_val_generations(
+            inputs=sample_inputs,
+            outputs=sample_outputs,
+            scores=sample_scores,
+            audios=sample_audios,
+            audio_sample_rates=sample_audio_sample_rates,
+        )
 
         # dump generations
         val_data_dir = self.config.trainer.get("validation_data_dir", None)
@@ -507,6 +564,8 @@ class BaseRayDiffusionTrainer(ABC):
                 scores=sample_scores,
                 reward_extra_infos_dict=reward_extra_infos_dict,
                 dump_path=val_data_dir,
+                audios=sample_audios,
+                audio_sample_rates=sample_audio_sample_rates,
             )
 
         for key_info, lst in reward_extra_infos_dict.items():

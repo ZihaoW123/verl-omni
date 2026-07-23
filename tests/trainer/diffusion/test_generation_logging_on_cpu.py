@@ -1,0 +1,86 @@
+# Copyright 2026 Bytedance Ltd. and/or its affiliates
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import importlib.util
+import wave
+from pathlib import Path
+
+import torch
+from PIL import Image
+
+
+def _load_generation_logging_module():
+    module_path = Path(__file__).parents[3] / "verl_omni/trainer/diffusion/generation_logging.py"
+    spec = importlib.util.spec_from_file_location("generation_logging", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_prepare_visual_outputs_recognizes_ltx_frame_batch() -> None:
+    generation_logging = _load_generation_logging_module()
+
+    media_type, videos = generation_logging.prepare_visual_outputs(torch.zeros(2, 121, 8, 10))
+
+    assert media_type == "video"
+    assert videos.shape == (2, 121, 8, 10, 3)
+    assert videos.dtype.name == "uint8"
+    Image.fromarray(videos[0, 0])
+
+
+def test_prepare_visual_outputs_preserves_image_batch_support() -> None:
+    generation_logging = _load_generation_logging_module()
+
+    media_type, images = generation_logging.prepare_visual_outputs(torch.zeros(2, 3, 8, 10))
+
+    assert media_type == "image"
+    assert images.shape == (2, 8, 10, 3)
+    Image.fromarray(images[0])
+
+
+def test_save_visual_outputs_muxes_audio_into_video(tmp_path, monkeypatch) -> None:
+    generation_logging = _load_generation_logging_module()
+    ffmpeg_commands = []
+
+    def fake_video_exporter(frames, output_path, fps):
+        assert len(frames) == 5
+        assert fps == 24
+        Path(output_path).write_bytes(b"silent-video")
+        return output_path
+
+    def fake_ffmpeg(command, check):
+        assert check is True
+        ffmpeg_commands.append(command)
+        audio_path = Path(command[command.index("-i", command.index("-i") + 1) + 1])
+        with wave.open(str(audio_path), "rb") as wav_file:
+            assert wav_file.getframerate() == 48_000
+            assert wav_file.getnchannels() == 1
+        Path(command[-1]).write_bytes(b"video-with-audio")
+
+    monkeypatch.setattr(generation_logging.subprocess, "run", fake_ffmpeg)
+    media_type, output_paths = generation_logging.save_visual_outputs(
+        torch.zeros(1, 5, 8, 10),
+        tmp_path,
+        fps=24,
+        audios=torch.zeros(1, 1, 800),
+        audio_sample_rates=[48_000],
+        video_exporter=fake_video_exporter,
+        ffmpeg_exe="/fake/ffmpeg",
+    )
+
+    assert media_type == "video"
+    assert Path(output_paths[0]).read_bytes() == b"video-with-audio"
+    codec_index = ffmpeg_commands[0].index("-c:v")
+    assert ["-c:v", "copy", "-c:a", "aac"] == ffmpeg_commands[0][codec_index : codec_index + 4]
+    assert "+faststart" in ffmpeg_commands[0]
