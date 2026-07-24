@@ -48,6 +48,11 @@ LTX2_LORA_TARGET_MODULES = [
 ]
 
 
+def normalize_ltx_output_type(output_type: str | None) -> str | None:
+    """Translate verl's generic image output default to LTX video tensors."""
+    return "pt" if output_type == "image" else output_type
+
+
 def calculate_shift(
     image_seq_len: int,
     base_image_seq_len: int,

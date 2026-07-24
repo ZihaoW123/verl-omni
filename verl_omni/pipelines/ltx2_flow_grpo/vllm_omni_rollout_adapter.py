@@ -34,7 +34,7 @@ from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.schedulers import FlowMatchSDEDiscreteScheduler
 
-from .common import calculate_shift
+from .common import calculate_shift, normalize_ltx_output_type
 
 __all__ = ["LTX23PipelineWithLogProb"]
 
@@ -133,6 +133,7 @@ class LTX23PipelineWithLogProb(LTX23Pipeline):
         req.prompt = payload
 
     def _configure_flow_grpo(self, req: OmniDiffusionRequest) -> None:
+        req.sampling_params.output_type = normalize_ltx_output_type(req.sampling_params.output_type)
         extra_args = req.sampling_params.extra_args or {}
         self._flow_grpo_noise_level = float(extra_args.get("noise_level", 0.8))
         self._flow_grpo_sde_type = extra_args.get("sde_type", "cps")
