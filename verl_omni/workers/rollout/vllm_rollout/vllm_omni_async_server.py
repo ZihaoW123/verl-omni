@@ -46,7 +46,7 @@ from vllm_omni.outputs import OmniRequestOutput
 
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.workers.config import DiffusionModelConfig, DiffusionRolloutConfig
-from verl_omni.workers.rollout.replica import DiffusionOutput
+from verl_omni.workers.rollout.replica import DiffusionOutput, unbatch_single_request_video
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
@@ -446,6 +446,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             diffusion_output = torch.from_numpy(diffusion_output).float()
         else:
             diffusion_output = self._to_tensor(diffusion_output).float() / 255.0
+        diffusion_output = unbatch_single_request_video(diffusion_output)
 
         # Extract extra data from custom_output (populated by DiffusionEngine)
         mm_output = final_res.custom_output or {}
