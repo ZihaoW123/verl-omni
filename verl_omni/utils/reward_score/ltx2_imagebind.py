@@ -14,6 +14,7 @@
 
 """Audio-video semantic alignment reward for LTX-2.3 using ImageBind."""
 
+import os
 import threading
 import warnings
 
@@ -33,8 +34,10 @@ _VISION_STD = (0.26862954, 0.26130258, 0.27577711)
 _MODEL_CACHE = {}
 _MODEL_LOCK = threading.Lock()
 
+_DEFAULT_MODEL = '.checkpoints/imagebind_huge.pth'
 
-def _load_imagebind(device: str):
+
+def _load_imagebind(device: str, model_path: str):
     if device not in _MODEL_CACHE:
         try:
             from imagebind.models import imagebind_model
@@ -47,7 +50,22 @@ def _load_imagebind(device: str):
             "ImageBind is licensed CC-BY-NC-SA 4.0 (NonCommercial).",
             stacklevel=2,
         )
-        _MODEL_CACHE[device] = imagebind_model.imagebind_huge(pretrained=True).to(device).eval()
+        model = imagebind_model.imagebind_huge(pretrained=False)
+        if not os.path.exists(model_path):
+            print(
+                "Downloading imagebind weights to .checkpoints/imagebind_huge.pth ..."
+            )
+            os.makedirs(".checkpoints", exist_ok=True)
+            torch.hub.download_url_to_file(
+                "https://dl.fbaipublicfiles.com/imagebind/imagebind_huge.pth",
+                _DEFAULT_MODEL,
+                progress=True,
+            )
+
+        model.load_state_dict(torch.load(model_path, weights_only=True))
+        
+        # model.load_state_dict(torch.load(".checkpoints/imagebind_huge.pth", weights_only=True))
+        _MODEL_CACHE[device] = model.to(device).eval()
     return _MODEL_CACHE[device]
 
 
@@ -161,6 +179,7 @@ def compute_score_imagebind_audio_video(
     ground_truth: str,
     extra_info: dict,
     device: str = "cuda",
+    model_name_or_path: str = _DEFAULT_MODEL,
     **kwargs,
 ) -> dict:
     """Compute ImageBind cosine similarity between generated audio and video."""
@@ -180,7 +199,7 @@ def compute_score_imagebind_audio_video(
         raise KeyError("ImageBind reward requires extra_info['audio_sample_rate'].")
 
     with _MODEL_LOCK, torch.no_grad():
-        model = _load_imagebind(device)
+        model = _load_imagebind(device, model_name_or_path)
         embeddings = model(
             {
                 ModalityType.AUDIO: _preprocess_audio(audio, int(sample_rate), device),
