@@ -112,6 +112,7 @@ python3 -m verl_omni.trainer.main_diffusion \
     '+reward.reward_functions.imagebind.name=compute_score_imagebind_audio_video' \
     '+reward.reward_functions.imagebind.weight=1.0' \
     '+reward.reward_functions.imagebind.device=cuda' \
+    '+reward.reward_functions.imagebind.model_name_or_path=.checkpoints/imagebind_huge.pth' \
     reward.aggregation=weighted_sum \
     trainer.logger='["console","tensorboard"]' \
     trainer.project_name=flow_grpo \
