@@ -48,7 +48,7 @@ pip install "verl @ git+https://github.com/verl-project/verl.git@05b262b6"
 
 # verl's V1 trainer (TaskRunnerV1) imports TransferQueue at startup; main_ppo
 # fails with ModuleNotFoundError without it, and it is not always pulled transitively
-pip install TransferQueue==0.1.8 librosa qwen_vl_utils
+pip install TransferQueue==0.1.8 qwen-vl-utils
 
 # verl-omni (this repo)
 pip install -e .
@@ -296,10 +296,12 @@ absolute image/audio paths, so the AVQA media directory must be mounted at the
 same path on every Ray worker. The converter validates modalities, options,
 labels, and media existence and prints kept/dropped counts for each split.
 
-Standalone audio is decoded to a 16 kHz waveform by
+Image and audio paths are decoded by Qwen's `qwen_omni_utils.process_mm_info`
+through
 [`OmniRLHFDataset`](../../verl_omni/utils/dataset/omni_rl_datasets.py). Install
-the audio loader without changing the NPU engine stack with
-`pip install -e ".[audio]"`.
+the official media loader without changing the NPU engine stack with
+`pip install -e ".[audio]"`, and ensure `ffmpeg` is available on every Ray
+worker.
 
 ### Run NPU training
 

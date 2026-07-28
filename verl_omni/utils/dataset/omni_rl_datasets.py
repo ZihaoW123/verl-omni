@@ -15,83 +15,19 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from omegaconf import DictConfig
 from verl.utils.dataset.rl_dataset import RLHFDataset
 
 
 class OmniRLHFDataset(RLHFDataset):
-    """Decode audio paths into waveforms before invoking HF processors.
+    """Adapt Qwen's multimodal media loader to verl's RL dataset interface.
 
-    verl turns parquet media columns into structured messages. Vision helpers
-    resolve image/video paths, while standalone audio paths otherwise remain
-    strings. Qwen3-Omni's feature extractor expects waveform arrays, so this
-    class resolves audio at the dataset processing seam.
+    verl turns parquet media columns into structured messages. Qwen's
+    ``process_mm_info`` then resolves image/audio/video paths into the media
+    objects expected by the Qwen3-Omni processor and vLLM-Omni rollout.
     """
-
-    @staticmethod
-    def _normalize_audio_path(audio: Any) -> Any:
-        if isinstance(audio, os.PathLike):
-            return os.fspath(audio)
-        if isinstance(audio, str) and audio.startswith("file://"):
-            parsed = urlparse(audio)
-            if parsed.netloc in ("", "localhost"):
-                return unquote(parsed.path)
-        return audio
-
-    @staticmethod
-    def _audio_sampling_rate(config: DictConfig | dict | None) -> int:
-        config = config or {}
-        processor_kwargs = config.get("mm_processor_kwargs", {}) or {}
-        return int(processor_kwargs.get("sampling_rate", 16000))
-
-    @classmethod
-    def _load_audio_for_processor(cls, audio: Any, sampling_rate: int) -> Any:
-        if isinstance(audio, dict):
-            if "array" in audio:
-                return audio["array"]
-            for key in ("audio", "audio_url", "path"):
-                if key in audio:
-                    return cls._load_audio_for_processor(audio[key], sampling_rate)
-            return audio
-
-        audio = cls._normalize_audio_path(audio)
-        if isinstance(audio, str):
-            if not audio.startswith(("http://", "https://")) and not os.path.isfile(audio):
-                raise FileNotFoundError(
-                    f"Audio path does not exist on this worker: {audio}. "
-                    "Ensure the AVQA media directory is mounted at the same path on every node."
-                )
-            from transformers.audio_utils import load_audio
-
-            return load_audio(audio, sampling_rate=sampling_rate)
-        return audio
-
-    @classmethod
-    def _extract_audio_info(
-        cls,
-        messages: list[dict],
-        sampling_rate: int = 16000,
-    ) -> list[Any] | None:
-        audios: list[Any] = []
-        for message in messages:
-            content = message.get("content")
-            if not isinstance(content, list):
-                continue
-            for item in content:
-                if not isinstance(item, dict) or item.get("type") != "audio":
-                    continue
-                if "audio" in item:
-                    audio = item["audio"]
-                elif "audio_url" in item:
-                    audio = item["audio_url"]
-                else:
-                    audio = {key: value for key, value in item.items() if key != "type"}
-                audios.append(cls._load_audio_for_processor(audio, sampling_rate))
-        return audios or None
 
     @classmethod
     def _process_multi_modal_info(
@@ -100,20 +36,12 @@ class OmniRLHFDataset(RLHFDataset):
         image_patch_size: int,
         config: DictConfig | dict | None,
     ) -> tuple[list[Any] | None, list[Any] | None, list[Any] | None]:
-        has_visual = any(
-            isinstance(message.get("content"), list)
-            and any(isinstance(item, dict) and item.get("type") in {"image", "video"} for item in message["content"])
-            for message in messages
-        )
-        if has_visual:
-            from qwen_vl_utils import process_vision_info
+        del cls, image_patch_size, config
 
-            images, videos = process_vision_info(
-                messages,
-                image_patch_size=image_patch_size,
-                return_video_metadata=True,
-            )
-        else:
-            images, videos = None, None
-        audios = cls._extract_audio_info(messages, cls._audio_sampling_rate(config))
+        from qwen_omni_utils import process_mm_info
+
+        # Qwen returns (audios, images, videos); verl expects
+        # (images, videos, audios). AVQA uses a standalone audio track rather
+        # than extracting audio from a video.
+        audios, images, videos = process_mm_info(messages, use_audio_in_video=False)
         return images, videos, audios

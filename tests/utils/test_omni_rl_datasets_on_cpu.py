@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+import sys
+from types import SimpleNamespace
+
 import pytest
 from datasets.utils._dill import dumps
 from dill import loads
@@ -40,27 +42,20 @@ def test_package_loaded_dataset_preserves_base_class_after_serialization():
     assert hasattr(restored, "_build_messages")
 
 
-def test_extract_audio_info_loads_path_at_configured_sampling_rate(tmp_path, monkeypatch):
-    audio_path = tmp_path / "sample.wav"
-    audio_path.write_bytes(b"wav")
-    waveform = np.array([0.0, 0.5, -0.5], dtype=np.float32)
+def test_process_multi_modal_info_uses_qwen_omni_utils_and_reorders_outputs(monkeypatch):
     calls = []
+    audios = [object()]
+    images = [object()]
+    videos = [object()]
 
-    def fake_load_audio(path, sampling_rate):
-        calls.append((path, sampling_rate))
-        return waveform
+    def fake_process_mm_info(messages, use_audio_in_video):
+        calls.append((messages, use_audio_in_video))
+        return audios, images, videos
 
-    monkeypatch.setattr("transformers.audio_utils.load_audio", fake_load_audio)
-    messages = [{"role": "user", "content": [{"type": "audio", "audio": str(audio_path)}]}]
+    monkeypatch.setitem(sys.modules, "qwen_omni_utils", SimpleNamespace(process_mm_info=fake_process_mm_info))
+    messages = [{"role": "user", "content": [{"type": "audio", "audio": "/data/sample.wav"}]}]
 
-    result = OmniRLHFDataset._extract_audio_info(messages, sampling_rate=16000)
+    result = OmniRLHFDataset._process_multi_modal_info(messages, image_patch_size=14, config={})
 
-    assert result is not None
-    np.testing.assert_array_equal(result[0], waveform)
-    assert calls == [(str(audio_path), 16000)]
-
-
-def test_load_audio_reports_unmounted_media_path(tmp_path):
-    missing = tmp_path / "missing.wav"
-    with pytest.raises(FileNotFoundError, match="mounted at the same path"):
-        OmniRLHFDataset._load_audio_for_processor(str(missing), sampling_rate=16000)
+    assert result == (images, videos, audios)
+    assert calls == [(messages, False)]
