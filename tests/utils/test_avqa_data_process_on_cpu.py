@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 
 def _load_module():
@@ -94,3 +95,9 @@ def test_convert_split_writes_verl_parquet(tmp_path):
     assert stats["dropped"] == {}
     assert frame.loc[0, "data_source"] == avqa.DATA_SOURCE
     assert frame.loc[0, "ability"] == avqa.ABILITY
+
+    parquet_file = pq.ParquetFile(output)
+    for column_index in range(parquet_file.metadata.num_columns):
+        encodings = parquet_file.metadata.row_group(0).column(column_index).encodings
+        assert "RLE_DICTIONARY" not in encodings
+        assert "PLAIN_DICTIONARY" not in encodings

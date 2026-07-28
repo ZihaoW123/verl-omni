@@ -157,7 +157,10 @@ def convert_split(input_json: str | Path, output_path: str | Path, split: str) -
 
     output_path = Path(output_path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_parquet(output_path, engine="pyarrow", index=False)
+    # Avoid native Parquet reader crashes ("Index not in dictionary bounds")
+    # observed with dictionary-encoded nested columns in some PyArrow 25
+    # environments.
+    pd.DataFrame(rows).to_parquet(output_path, engine="pyarrow", index=False, use_dictionary=False)
     return {
         "input": len(records),
         "kept": len(rows),
