@@ -12,6 +12,7 @@ Both **GPU** and **NPU** training platforms are supported via two launch scripts
   — **GPU**, **LoRA (r=64)** on a single node with **4 × H100/H200 80GB**.
 - [`run_qwen3_omni_thinker_gspo_npu.sh`](qwen3_omni/run_qwen3_omni_thinker_gspo_npu.sh)
   — **NPU**, **full-parameter** on a single **Atlas 800T A3** node with **16 NPUs**.
+
 For the base environment setup, see the [installation guide](../../docs/start/install.md).
 
 ## Installation
@@ -223,7 +224,7 @@ low-variance advantages on a high-baseline policy.
 ## Training with `MMK12`
 
 For visual math reasoning we ship an end-to-end pipeline on top of the
-[MMK12](https://www.modelscope.cn/datasets/SKYLENAGE/MMK12) dataset (image
+[MMK12](https://huggingface.co/datasets/FangqingM/MMK12) dataset (image
 input + text output, K12 math). It reuses the same GSPO recipe as the
 text-only path — only the data preprocessing and the reward scorer differ.
 The launch example below uses the NPU / full-parameter flavor
@@ -238,17 +239,16 @@ local directory — the loader expects filenames like `train-*.parquet` and
 
 ```bash
 python examples/gspo_trainer/data_process/mmk12.py \
-    --input_dir  /path/to/mmk12/ \
-    --output_dir ~/data/mmk12
+    --local_dataset_path /path/to/mmk12/ \
+    --local_save_dir ~/data/mmk12
 ```
 
 The converter emits one verl RL row per problem, with
 `data_source="math_dapo"`, a system prompt that constrains the model to emit
 `<answer>…\boxed{…}…</answer>`, and the image bytes carried inline in the
-`images` column so the parquet stays self-contained. Dropped samples (empty
-question / answer, undecodable image) and answer-type tallies are printed at
-the end. See the module docstring in
-[`data_process/mmk12.py`](data_process/mmk12.py) for the exact output schema.
+`images` column so the parquet stays self-contained. Input / kept / dropped
+counts and answer-type tallies are printed at the end. See the module docstring
+in [`data_process/mmk12.py`](data_process/mmk12.py) for the exact output schema.
 
 ### Run training
 
@@ -352,7 +352,7 @@ examples/gspo_trainer/
 │   ├── run_qwen3_omni_thinker_gspo_lora.sh   ← launch script (GPU, LoRA r=64)
 │   ├── run_qwen3_omni_thinker_gspo_npu.sh    ← launch script (NPU, full-parameter)
 │   ├── config/
-│   │   └── qwen3_omni_thinker_gspo.yaml      ← shared recipe config
+│   │   └── qwen3_omni_thinker_gspo.yaml      ← recipe config (inherits verl ppo_trainer)
 │   ├── qwen3_omni_thinker_only.yaml          ← vllm-omni stage config (GPU)
 │   └── qwen3_omni_thinker_only_npu.yaml      ← vllm-omni stage config (NPU)
 ├── data_process/

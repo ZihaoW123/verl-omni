@@ -11,33 +11,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Convert MMK12 parquet to verl RL parquet (image-in / text-out).
+"""Preprocess the MMK12 dataset to verl RL parquet format (image-in / text-out).
 
 Raw MMK12 schema:
-    id, question, answer, subject, image   # image is {"bytes": <png bytes>}
+    id, question, answer, subject, image   # image is {"bytes": <png bytes>, "path": ...}
 
 Output verl RL schema (one row per problem):
-    data_source  = "math_dapo"   # routes through upstream math_dapo rule reward
+    data_source  = "math_dapo"   # routes through the math_dapo rule reward
     prompt       = [{"role": "system", "content": <SYSTEM_PROMPT>},
-                    {"role": "user", "content": <prompt_text>},]
-    images       = [{"bytes": <png bytes>}]
+                    {"role": "user",   "content": "<image>\\n{question}"}]
+    images       = [{"bytes": <png bytes>}]   # carried inline, byte-identical to the source
     ability      = "math_vl"
     reward_model = {"style": "rule", "ground_truth": <answer>}
     extra_info   = {split, index, id, dataset, subject, raw_question, raw_answer, options}
 
-Pure helpers (is_valid_image, normalize_image, classify_answer) are importable
-without torch/verl so they can be unit-tested on CPU.
+Pure helpers (is_valid_image, normalize_image, can_open_image, classify_answer,
+parse_options) are importable without torch/verl so they can be unit-tested on CPU.
 """
 
 import argparse
+import glob
 import io
 import json
 import os
 import re
-from pathlib import Path
 from typing import Any
 
-import pandas as pd
+import datasets
 from PIL import Image
 
 DATA_SOURCE = "math_dapo"
@@ -56,6 +56,8 @@ SYSTEM_PROMPT = (
 )
 
 USER_PROMPT_TEMPLATE = "<image>\n{question}"
+
+_OPTION_LINE_RE = re.compile(r"^\s*([A-E])[.)、]\s*(.+?)\s*$", re.MULTILINE)
 
 
 def is_valid_image(image_field: Any) -> bool:
@@ -92,15 +94,12 @@ def can_open_image(image_bytes: bytes) -> bool:
 def classify_answer(answer: str) -> str:
     """Coarse answer-type bucket for conversion stats."""
     a = str(answer).strip()
-    if len(a) == 1 and a.upper() in "ABCDEFGH":
+    if len(a) == 1 and a.upper() in "ABCDE":
         return "option"
     stripped = a.replace("-", "", 1).replace(".", "", 1)
     if stripped.isdigit():
         return "numeric"
     return "other"
-
-
-_OPTION_LINE_RE = re.compile(r"^\s*([A-E])[.)、]\s*(.+?)\s*$", re.MULTILINE)
 
 
 def parse_options(question: str) -> dict[str, str]:
@@ -116,112 +115,104 @@ def parse_options(question: str) -> dict[str, str]:
     return opts
 
 
-def _build_rl_row(row: dict, split: str, index: int, verify_images: bool = True) -> tuple[dict | None, str | None]:
-    question = str(row.get("question") or "").strip()
-    answer = str(row.get("answer") or "").strip()
-    image_field = row.get("image")
+def make_keep_fn(verify_images: bool):
+    """Return a ``.filter()`` predicate that drops empty / undecodable rows."""
 
-    if not question:
-        return None, "dropped_empty_question"
-    if not answer:
-        return None, "dropped_empty_answer"
-    if not is_valid_image(image_field):
-        return None, "dropped_bad_image"
+    def keep(example) -> bool:
+        question = str(example.get("question") or "").strip()
+        answer = str(example.get("answer") or "").strip()
+        image_field = example.get("image")
+        if not question or not answer or not is_valid_image(image_field):
+            return False
+        if verify_images and not can_open_image(normalize_image(image_field)["bytes"]):
+            return False
+        return True
 
-    image_dict = normalize_image(image_field)
-    if verify_images and not can_open_image(image_dict["bytes"]):
-        return None, "dropped_bad_image"
-
-    prompt_text = USER_PROMPT_TEMPLATE.format(question=question)
-    options = parse_options(question)
-    return {
-        "data_source": DATA_SOURCE,
-        "prompt": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt_text},
-        ],
-        "images": [image_dict],
-        "ability": ABILITY,
-        "reward_model": {"style": "rule", "ground_truth": answer},
-        "extra_info": {
-            "split": split,
-            "index": index,
-            "id": str(row.get("id") or ""),
-            "dataset": DATASET_NAME,
-            "subject": str(row.get("subject") or ""),
-            "raw_question": question,
-            "raw_answer": answer,
-            "options": json.dumps(options, ensure_ascii=False),  # JSON string; parse in reward
-        },
-    }, None
+    return keep
 
 
-def convert_dataset(
-    input_paths: list[str],
-    output_path: str,
-    split: str,
-    verify_images: bool = True,
-) -> dict:
-    """Read input parquet shards, convert to verl RL rows, write one parquet file.
+def make_map_fn(split: str):
+    """Return a ``.map()`` function that builds one verl RL row per example."""
 
-    Returns a stats dict with input/kept/dropped counts and answer-type tallies.
-    """
-    frames = [pd.read_parquet(p, engine="pyarrow") for p in input_paths]
-    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    def process_fn(example, idx):
+        question = str(example.get("question") or "").strip()
+        answer = str(example.get("answer") or "").strip()
+        image_field = example.get("image")
+        options = parse_options(question)
+        return {
+            "data_source": DATA_SOURCE,
+            "prompt": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(question=question)},
+            ],
+            "images": [normalize_image(image_field)],
+            "ability": ABILITY,
+            "reward_model": {"style": "rule", "ground_truth": answer},
+            "extra_info": {
+                "split": split,
+                "index": idx,
+                "id": str(example.get("id") or ""),
+                "dataset": DATASET_NAME,
+                "subject": str(example.get("subject") or ""),
+                "raw_question": question,
+                "raw_answer": answer,
+                "options": json.dumps(options, ensure_ascii=False),  # JSON string; parsed in reward
+            },
+        }
 
-    stats = {
-        "input": len(df),
-        "kept": 0,
-        "dropped_empty_question": 0,
-        "dropped_empty_answer": 0,
-        "dropped_bad_image": 0,
-        "answer_types": {"option": 0, "numeric": 0, "other": 0},
-    }
-
-    out_rows: list[dict] = []
-    for index, row in df.iterrows():
-        rl_row, drop_reason = _build_rl_row(row.to_dict(), split=split, index=int(index), verify_images=verify_images)
-        if rl_row is None:
-            stats[drop_reason] += 1
-            continue
-        stats["answer_types"][classify_answer(rl_row["reward_model"]["ground_truth"])] += 1
-        out_rows.append(rl_row)
-
-    stats["kept"] = len(out_rows)
-    out_df = pd.DataFrame(out_rows)
-    os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
-    out_df.to_parquet(output_path, engine="pyarrow", index=False)
-    return stats
-
-
-def _default_input_shards(data_dir: str, split: str) -> list[str]:
-    pattern = f"{split}-*.parquet"
-    return sorted(str(p) for p in Path(data_dir).glob(pattern))
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert MMK12 to verl RL parquet.")
-    parser.add_argument("--input_dir", default=None)
-    parser.add_argument("--output_dir", default=None)
-    parser.add_argument("--no_verify_images", action="store_true", help="Skip PIL verify of image bytes.")
-    args = parser.parse_args()
-
-    verify = not args.no_verify_images
-    for split in ("train", "test"):
-        shards = _default_input_shards(args.input_dir, split)
-        if not shards:
-            print(f"[{split}] no input shards found in {args.input_dir}, skipping")
-            continue
-        out_path = os.path.join(args.output_dir, f"{split}.parquet")
-        stats = convert_dataset(shards, out_path, split=split, verify_images=verify)
-        print(f"[{split}] wrote {out_path}")
-        print(f"  input={stats['input']} kept={stats['kept']}")
-        print(
-            f"  dropped: empty_q={stats['dropped_empty_question']} "
-            f"empty_a={stats['dropped_empty_answer']} bad_img={stats['dropped_bad_image']}"
-        )
-        print(f"  answer_types={stats['answer_types']}")
+    return process_fn
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Convert MMK12 to verl RL parquet.")
+    parser.add_argument(
+        "--local_dataset_path",
+        default=None,
+        help="Local dir with the raw MMK12 train-*.parquet / test-*.parquet shards.",
+    )
+    parser.add_argument(
+        "--local_save_dir", default="~/data/mmk12", help="The save directory for the preprocessed dataset."
+    )
+    parser.add_argument("--no_verify_images", action="store_true", help="Skip PIL verify of image bytes.")
+    args = parser.parse_args()
+
+    local_dataset_path = args.local_dataset_path
+    if local_dataset_path is None:
+        raise ValueError("dataset does not exist. Download the raw parquet shards from HuggingFace.")
+
+    data_files = {
+        "train": sorted(glob.glob(os.path.join(local_dataset_path, "train-*.parquet"))),
+        "test": sorted(glob.glob(os.path.join(local_dataset_path, "test-*.parquet"))),
+    }
+    if not data_files["train"] and not data_files["test"]:
+        raise FileNotFoundError(f"No train-*.parquet / test-*.parquet shards found in {local_dataset_path!r}")
+    dataset = datasets.load_dataset("parquet", data_files=data_files)
+
+    verify_images = not args.no_verify_images
+    local_save_dir = os.path.expanduser(args.local_save_dir)
+    os.makedirs(local_save_dir, exist_ok=True)
+
+    for split in ("train", "test"):
+        split_dataset = dataset[split]
+        # Keep image bytes raw (skip PIL decode) so the output bytes are identical to the source.
+        split_dataset = split_dataset.cast_column("image", datasets.Image(decode=False))
+
+        n_input = len(split_dataset)
+        split_dataset = split_dataset.filter(make_keep_fn(verify_images), num_proc=8)
+        split_dataset = split_dataset.map(
+            function=make_map_fn(split),
+            with_indices=True,
+            num_proc=8,
+            remove_columns=split_dataset.column_names,
+        )
+        n_kept = len(split_dataset)
+
+        out_path = os.path.join(local_save_dir, f"{split}.parquet")
+        split_dataset.to_parquet(out_path)
+
+        answer_types = {"option": 0, "numeric": 0, "other": 0}
+        for reward_model in split_dataset["reward_model"]:
+            answer_types[classify_answer(reward_model["ground_truth"])] += 1
+        print(f"[{split}] wrote {out_path}")
+        print(f"  input={n_input} kept={n_kept} dropped={n_input - n_kept}")
+        print(f"  answer_types={answer_types}")

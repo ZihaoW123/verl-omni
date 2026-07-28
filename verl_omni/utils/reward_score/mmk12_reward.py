@@ -17,11 +17,19 @@ adapted for Qwen3-Omni native thinking mode.
 
 Design:
 
-1. **Unified correctness judgement via math_verify** with all three
-   extraction configs (``StringExtractionConfig`` + ``LatexExtractionConfig``
-   + ``ExprExtractionConfig``), matching MM-EUREKA's ``accuracy_reward_func``.
-   This handles both single-letter choices (A/B/C/D/E) and numeric/LaTeX
-   answers uniformly — no separate choice-regex branch.
+1. **Correctness judgement splits by answer type**:
+
+   * **Choice questions** (ground truth is a single letter A-E) are judged by
+     a pure string match on the model output - no sympy, no subprocess, no
+     timeout. If the model output a letter, match it directly; if it output a
+     value instead, fall back to comparing that value against the correct
+     option's content (``extra_info["options"]``) for 0.5 partial credit.
+   * **Numeric / LaTeX answers** reuse verl's ``math_verify.compute_score``
+     (``ExprExtractionConfig`` + ``LatexExtractionConfig``), which is
+     subprocess-isolated and timed.
+
+   Choices need no sympy, so they skip the subprocess timeout that sympy
+   requires - no separate ``StringExtractionConfig`` pool is maintained.
 
 2. **Answer extraction** prefers the ``<answer>…</answer>`` tag.  If the tag
    is present, only its inner text is fed to math_verify.  This avoids
@@ -38,27 +46,17 @@ Design:
 
 4. **Total reward** is additive, normalized to [0, 1]:
    ``score = (accuracy_reward + format_reward) / (1 + format_score)``.
-
-The math_verify parse can call ``signal.alarm()``, which raises in worker
-threads.  We isolate it in a ``ProcessPoolExecutor`` (spawn context), the
-same trick verl uses in ``verl/utils/reward_score/math_verify.py``.
 """
 
 import json
 import re
 
-from verl_omni.utils.reward_score.reward_utils import math_verify_score as _math_verify_score
+from verl.utils.reward_score.math_verify import compute_score as _math_verify_score
 
-# Angle-like expressions: ``60°``, ``60^\circ``, ``60\circ``.
-# Normalized before any parser sees the text.
 _ANGLE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:°|\^\\circ|\\circ)")
-
-# Extract content inside <answer>…</answer> (non-greedy, DOTALL).
 _ANSWER_TAG_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
-
-# \boxed{…} presence check (only checks for \boxed{ prefix; brace balancing
-# is handled by math_verify anyway).
 _BOXED_RE = re.compile(r"\\boxed\{")
+_CHOICE_RE = re.compile(r"(?<![A-Za-z])([A-E])(?![A-Za-z])")
 
 
 def _normalize_angle(text: str) -> str:
@@ -72,6 +70,21 @@ def _extract_answer_tag(text: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+def _is_choice_gt(gt: str) -> bool:
+    """True when the ground truth is a single multiple-choice letter (A-E)."""
+    return len(gt) == 1 and gt.upper() in "ABCDE"
+
+
+def _extract_choice_letter(content: str) -> str | None:
+    """Return the last standalone A-E letter in ``content``, or None.
+
+    Matches ``\\boxed{B}``, ``answer: B`` and a bare ``B`` uniformly. Returns
+    None when the model output no choice letter (e.g. it wrote a value).
+    """
+    letters = _CHOICE_RE.findall(content or "")
+    return letters[-1].upper() if letters else None
+
+
 def _compute_format_score(
     text: str,
     answer_inner: str | None,
@@ -81,9 +94,6 @@ def _compute_format_score(
 
     * **answer_tag**: exactly one ``<answer>…</answer>`` pair.
     * **boxed**: ``\\boxed{…}`` inside ``<answer>``.
-
-    Reward = ``format_score`` × passed / 2.  Ladder (default 0.3):
-    0/2 → 0.000, 1/2 → 0.150, 2/2 → 0.300.
     """
     text = text or ""
     has_answer = answer_inner is not None and (text.count("<answer>") == 1 and text.count("</answer>") == 1)
@@ -103,11 +113,11 @@ def compute_score(
     Reward formula (additive, normalized to [0, 1]):
         score = (accuracy_reward + format_reward) / (1 + format_score)
 
-    * ``accuracy_reward`` ∈ {0, 1} — math_verify with String+Latex+Expr configs.
+    * ``accuracy_reward`` ∈ {0, 1} - choice: string match; numeric/LaTeX: verl math_verify.
     * ``format_reward`` ∈ [0, ``format_score``] — progressive (answer_tag + boxed).
 
     Config:
-        reward.custom_reward_function.path=verl_omni/utils/reward_score/mmk12.py
+        reward.custom_reward_function.path=verl_omni/utils/reward_score/mmk12_reward.py
         reward.custom_reward_function.name=compute_score
     """
     gt = _normalize_angle(str(ground_truth).strip())
@@ -117,22 +127,31 @@ def compute_score(
     answer_inner = _extract_answer_tag(solution_str)
     content = answer_inner if answer_inner is not None else solution_str
 
-    # 2. Correctness judgement — unified math_verify path.
-    accuracy_reward = _math_verify_score(content, gt, timeout=math_verify_timeout)
-
-    # Multi-choice content fallback: if gt is a single letter and math_verify
-    # failed, but ``extra_info["options"]`` provides the option content, retry
-    # against the correct option's content.  Partial credit (0.5) since the
-    # model gave the right value but didn't follow the "output letter" instruction.
-    if accuracy_reward < 1.0 and len(gt) == 1 and gt.upper() in "ABCDE":
-        options_raw = (kwargs.get("extra_info") or {}).get("options") or "{}"
-        try:
-            options = json.loads(options_raw)
-        except (ValueError, TypeError):
-            options = {}
-        option_content = options.get(gt.upper())
-        if option_content:
-            accuracy_reward = _math_verify_score(content, option_content, timeout=math_verify_timeout) * 0.5
+    # 2. Correctness judgement — dispatch by (gt type, pred type).
+    if _is_choice_gt(gt):
+        pred_letter = _extract_choice_letter(content)
+        if pred_letter is not None:
+            # gt is a letter and the model also output a letter -> pure string
+            # match. No sympy, no subprocess, no timeout needed.
+            accuracy_reward = 1.0 if pred_letter == gt.upper() else 0.0
+        else:
+            # gt is a letter but the model output a value (not a letter) ->
+            # partial credit (0.5) if the value matches the correct option's
+            # content. Reuses verl's math_verify (subprocess-isolated, timed).
+            options_raw = (kwargs.get("extra_info") or {}).get("options") or {}
+            try:
+                options = json.loads(options_raw)
+            except (ValueError, TypeError):
+                options = {}
+            option_content = options.get(gt.upper())
+            if option_content:
+                accuracy_reward = _math_verify_score(content, option_content, timeout=math_verify_timeout) * 0.5
+            else:
+                accuracy_reward = 0.0
+    else:
+        # Numeric / LaTeX answer -> reuse verl's math_verify (subprocess-isolated,
+        # with timeout).
+        accuracy_reward = _math_verify_score(content, gt, timeout=math_verify_timeout)
 
     # 3. Format reward (progressive: answer_tag + boxed).
     format_reward = _compute_format_score(solution_str, answer_inner, format_score)
