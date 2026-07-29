@@ -38,6 +38,24 @@ Verify:
 python -c "import verl, verl_omni, vllm, vllm_omni; print('OK')"
 ```
 
+The recommended GPU and NPU launchers both use
+`verl_omni.trainer.main_omni` and set
+`VERL_USE_EXTERNAL_MODULES=verl_omni`. Processor/model setup is handled by the
+registered Qwen3-Omni V1 adapter, so these launchers do not load the deprecated
+model monkey-patches through `external_lib`.
+
+The launchers colocate the FSDP actor and the `vllm-omni` rollout on the same
+devices. `run_qwen3_omni_thinker_gspo_lora_v1.sh` targets a single node with
+**4 × H100/H200 80GB**; `run_qwen3_omni_thinker_gspo_npu.sh` targets a single
+**Atlas 800T A3** node with **16 NPUs** (full-parameter FSDP actor, rollout
+TP=2). The NPU launcher dynamically generates a thinker-only deploy config for
+each rollout replica from that replica's visible devices, avoiding cross-replica
+device-rank collisions. Multi-node is not yet validated on either platform.
+
+> **Deprecated:** `run_qwen3_omni_thinker_gspo_lora.sh` retains the old
+> `verl.trainer.main_ppo` and model monkey-patch path for backward compatibility.
+> New development should use the V1 launchers.
+
 ## Prepare the model
 
 The script uses the HuggingFace Hub ID `Qwen/Qwen3-Omni-30B-A3B-Instruct`
@@ -77,7 +95,7 @@ bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu.sh
 > `verl.trainer.main_ppo` entrypoint with `external_lib` monkey-patches)
 > is kept for backward compatibility but no longer recommended.
 
-The V1 script uses pure CLI overrides on `verl_omni.trainer.main_omni`
+The V1 launchers use pure CLI overrides on `verl_omni.trainer.main_omni`
 (no `--config-path/--config-name`, no recipe YAML). Config precedence,
 lowest to highest:
 
@@ -280,9 +298,8 @@ examples/gspo_trainer/
 │   ├── run_qwen3_omni_thinker_gspo_lora.sh           ← deprecated (old main_ppo entrypoint)
 │   ├── run_qwen3_omni_thinker_gspo_npu.sh            ← launch script (NPU, full-parameter)
 │   ├── config/
-│   │   └── qwen3_omni_thinker_gspo.yaml              ← old recipe config (deprecated path only)
-│   ├── qwen3_omni_thinker_only.yaml                  ← old vllm-omni stage config (deprecated path only)
-│   └── qwen3_omni_thinker_only_npu.yaml              ← old vllm-omni stage config (deprecated path only)
+│   │   └── qwen3_omni_thinker_gspo.yaml              ← deprecated main_ppo recipe config
+│   └── qwen3_omni_thinker_only.yaml                  ← deprecated GPU stage config
 ├── data_process/
 │   ├── mmk12.py                                      ← MMK12 → verl RL parquet converter
 │   └── avqa.py                                       ← AVQA → verl RL parquet converter
