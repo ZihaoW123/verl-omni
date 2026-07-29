@@ -100,13 +100,20 @@ def test_configure_processor_binds_multimodal_pad_dedup(monkeypatch):
         def _compute_position_ids(self, input_ids, attention_mask, multi_modal_inputs, mm_processor_kwargs=None):
             del input_ids, attention_mask, multi_modal_inputs, mm_processor_kwargs
 
-    agent_loop_module = types.ModuleType("verl.experimental.agent_loop.agent_loop")
-    agent_loop_module.AgentLoopWorker = AgentLoopWorker
-    for package_name in ("verl", "verl.experimental", "verl.experimental.agent_loop"):
+    agent_loop_tq_module = types.ModuleType("verl.trainer.ppo.v1.agent_loop_tq")
+    agent_loop_tq_module.AgentLoopWorkerTQ = SimpleNamespace(
+        __ray_metadata__=SimpleNamespace(modified_class=AgentLoopWorker)
+    )
+    for package_name in (
+        "verl",
+        "verl.trainer",
+        "verl.trainer.ppo",
+        "verl.trainer.ppo.v1",
+    ):
         package = types.ModuleType(package_name)
         package.__path__ = []
         monkeypatch.setitem(sys.modules, package_name, package)
-    monkeypatch.setitem(sys.modules, "verl.experimental.agent_loop.agent_loop", agent_loop_module)
+    monkeypatch.setitem(sys.modules, "verl.trainer.ppo.v1.agent_loop_tq", agent_loop_tq_module)
 
     configured = Qwen3OmniThinkerAdapter.configure_processor(
         "/fake/qwen3-omni",
@@ -173,13 +180,24 @@ def test_v1_adapter_forwards_qwen3_omni_audio_lengths_to_rope(monkeypatch):
             )
             return position_ids
 
-    agent_loop_module = types.ModuleType("verl.experimental.agent_loop.agent_loop")
-    agent_loop_module.AgentLoopWorker = AgentLoopWorker
-    for package_name in ("verl", "verl.experimental", "verl.experimental.agent_loop"):
+    class AgentLoopWorkerTQ(AgentLoopWorker):
+        # Ray copies inherited methods when @ray.remote builds the actor class.
+        _compute_position_ids = AgentLoopWorker._compute_position_ids
+
+    agent_loop_tq_module = types.ModuleType("verl.trainer.ppo.v1.agent_loop_tq")
+    agent_loop_tq_module.AgentLoopWorkerTQ = SimpleNamespace(
+        __ray_metadata__=SimpleNamespace(modified_class=AgentLoopWorkerTQ)
+    )
+    for package_name in (
+        "verl",
+        "verl.trainer",
+        "verl.trainer.ppo",
+        "verl.trainer.ppo.v1",
+    ):
         package = types.ModuleType(package_name)
         package.__path__ = []
         monkeypatch.setitem(sys.modules, package_name, package)
-    monkeypatch.setitem(sys.modules, "verl.experimental.agent_loop.agent_loop", agent_loop_module)
+    monkeypatch.setitem(sys.modules, "verl.trainer.ppo.v1.agent_loop_tq", agent_loop_tq_module)
 
     def _get_rope_index(
         processor,
@@ -213,7 +231,7 @@ def test_v1_adapter_forwards_qwen3_omni_audio_lengths_to_rope(monkeypatch):
     attention_mask = torch.ones_like(input_ids)
     multi_modal_inputs = {"feature_attention_mask": torch.tensor([[1, 1, 1, 0]])}
 
-    AgentLoopWorker._compute_position_ids(worker, input_ids, attention_mask, multi_modal_inputs)
+    AgentLoopWorkerTQ._compute_position_ids(worker, input_ids, attention_mask, multi_modal_inputs)
 
     torch.testing.assert_close(configured.audio_seqlens, torch.tensor([3]))
 
