@@ -17,68 +17,11 @@ for Qwen3-Omni."""
 
 import logging
 
+from verl_omni.pipelines.qwen3_omni.thinker_training_adapter import (
+    _patch_agent_loop_audio_rope_for_qwen3_omni,
+)
+
 logger = logging.getLogger(__name__)
-
-
-def _patch_agent_loop_audio_rope_for_qwen3_omni() -> None:
-    """Forward Qwen3-Omni audio feature lengths into ``get_rope_index``.
-
-    verl's generic agent loop forwards image/video grids when rebuilding
-    multimodal position ids, but Qwen3-Omni additionally requires the raw
-    audio feature lengths. The processor exposes those lengths through
-    ``feature_attention_mask``; bind them for the duration of the synchronous
-    position-id call without changing other processor types.
-    """
-    try:
-        from functools import partial
-
-        from verl.experimental.agent_loop.agent_loop import AgentLoopWorker
-    except (AttributeError, ImportError):
-        # ``verl`` imports external modules while its package is still being
-        # initialized. The processor construction path retries this patch once
-        # AgentLoopWorker is available.
-        return
-
-    original_compute_position_ids = AgentLoopWorker._compute_position_ids
-    if getattr(original_compute_position_ids, "_verl_qwen3_omni_audio_rope_patch", False):
-        return
-
-    def _compute_position_ids_with_audio(
-        self,
-        input_ids,
-        attention_mask,
-        multi_modal_inputs,
-        mm_processor_kwargs=None,
-    ):
-        processor = self.processor
-        feature_attention_mask = multi_modal_inputs.get("feature_attention_mask")
-        if processor.__class__.__name__ != "Qwen3OmniMoeProcessor" or feature_attention_mask is None:
-            return original_compute_position_ids(
-                self,
-                input_ids,
-                attention_mask,
-                multi_modal_inputs,
-                mm_processor_kwargs,
-            )
-
-        original_get_rope_index = processor.get_rope_index
-        processor.get_rope_index = partial(
-            original_get_rope_index,
-            audio_seqlens=feature_attention_mask.sum(-1),
-        )
-        try:
-            return original_compute_position_ids(
-                self,
-                input_ids,
-                attention_mask,
-                multi_modal_inputs,
-                mm_processor_kwargs,
-            )
-        finally:
-            processor.get_rope_index = original_get_rope_index
-
-    _compute_position_ids_with_audio._verl_qwen3_omni_audio_rope_patch = True
-    AgentLoopWorker._compute_position_ids = _compute_position_ids_with_audio
 
 
 def _register_qwen3_omni_automodel() -> None:
