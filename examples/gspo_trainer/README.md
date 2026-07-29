@@ -12,7 +12,7 @@ Both **GPU** and **NPU** training platforms are supported:
   — **GPU**, **LoRA (r=32)** on a single node with **4 × H100/H200 80GB**.
 - [`run_qwen3_omni_thinker_gspo_npu.sh`](qwen3_omni/run_qwen3_omni_thinker_gspo_npu.sh)
   — **NPU**, **full-parameter** on a single **Atlas 800T A3** node with **16 NPUs**.
-- [`run_qwen3_omni_thinker_gspo_npu_avqa.sh`](qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa.sh)
+- [`run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh`](qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh)
   — **NPU**, **full-parameter V1** for text + image + audio AVQA training.
 
 For the base environment setup, see the [installation guide](../../docs/start/install.md).
@@ -258,7 +258,7 @@ generic NPU script.
 TRAIN_FILE=$HOME/data/avqa_r1_6k/train.parquet \
 VAL_FILE=$HOME/data/avqa_r1_6k/validation.parquet \
 MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
-bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa.sh
+bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh
 ```
 
 The launcher uses a 2048-token multimodal prompt budget and a 512-token response
@@ -287,7 +287,7 @@ examples/gspo_trainer/
 │   ├── run_qwen3_omni_thinker_gspo_lora_mmk12_v1.sh  ← V1 launch script (GPU, LoRA r=32, image)
 │   ├── run_qwen3_omni_thinker_gspo_lora.sh           ← deprecated (old main_ppo entrypoint)
 │   ├── run_qwen3_omni_thinker_gspo_npu.sh            ← launch script (NPU, full-parameter)
-│   ├── run_qwen3_omni_thinker_gspo_npu_avqa.sh       ← V1 launch script (NPU, AVQA)
+│   ├── run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh    ← V1 launch script (NPU, AVQA)
 │   ├── config/
 │   │   └── qwen3_omni_thinker_gspo.yaml              ← main_ppo recipe config
 │   ├── qwen3_omni_thinker_only.yaml                  ← GPU stage config
