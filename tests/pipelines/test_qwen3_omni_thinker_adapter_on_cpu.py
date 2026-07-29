@@ -96,6 +96,18 @@ def test_configure_processor_binds_multimodal_pad_dedup(monkeypatch):
     monkeypatch.setattr(AutoProcessor, "from_pretrained", lambda *args, **kwargs: processor)
     monkeypatch.setattr(AutoConfig, "from_pretrained", lambda *args, **kwargs: config)
 
+    class AgentLoopWorker:
+        def _compute_position_ids(self, input_ids, attention_mask, multi_modal_inputs, mm_processor_kwargs=None):
+            del input_ids, attention_mask, multi_modal_inputs, mm_processor_kwargs
+
+    agent_loop_module = types.ModuleType("verl.experimental.agent_loop.agent_loop")
+    agent_loop_module.AgentLoopWorker = AgentLoopWorker
+    for package_name in ("verl", "verl.experimental", "verl.experimental.agent_loop"):
+        package = types.ModuleType(package_name)
+        package.__path__ = []
+        monkeypatch.setitem(sys.modules, package_name, package)
+    monkeypatch.setitem(sys.modules, "verl.experimental.agent_loop.agent_loop", agent_loop_module)
+
     configured = Qwen3OmniThinkerAdapter.configure_processor(
         "/fake/qwen3-omni",
         SimpleNamespace(trust_remote_code=False),

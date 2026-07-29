@@ -31,63 +31,6 @@ from verl_omni.pipelines.model_base import OmniModelBase
 logger = logging.getLogger(__name__)
 
 
-def _patch_agent_loop_audio_rope_for_qwen3_omni() -> None:
-    """Forward Qwen3-Omni audio feature lengths into ``get_rope_index``.
-
-    verl's generic V1 agent loop forwards image/video grids when rebuilding
-    multimodal position ids, but Qwen3-Omni additionally requires raw audio
-    feature lengths. The processor exposes those lengths through
-    ``feature_attention_mask``.
-    """
-    try:
-        from functools import partial
-
-        from verl.experimental.agent_loop.agent_loop import AgentLoopWorker
-    except (AttributeError, ImportError):
-        return
-
-    original_compute_position_ids = AgentLoopWorker._compute_position_ids
-    if getattr(original_compute_position_ids, "_verl_qwen3_omni_audio_rope_patch", False):
-        return
-
-    def _compute_position_ids_with_audio(
-        self,
-        input_ids,
-        attention_mask,
-        multi_modal_inputs,
-        mm_processor_kwargs=None,
-    ):
-        processor = self.processor
-        feature_attention_mask = multi_modal_inputs.get("feature_attention_mask")
-        if processor.__class__.__name__ != "Qwen3OmniMoeProcessor" or feature_attention_mask is None:
-            return original_compute_position_ids(
-                self,
-                input_ids,
-                attention_mask,
-                multi_modal_inputs,
-                mm_processor_kwargs,
-            )
-
-        original_get_rope_index = processor.get_rope_index
-        processor.get_rope_index = partial(
-            original_get_rope_index,
-            audio_seqlens=feature_attention_mask.sum(-1),
-        )
-        try:
-            return original_compute_position_ids(
-                self,
-                input_ids,
-                attention_mask,
-                multi_modal_inputs,
-                mm_processor_kwargs,
-            )
-        finally:
-            processor.get_rope_index = original_get_rope_index
-
-    _compute_position_ids_with_audio._verl_qwen3_omni_audio_rope_patch = True
-    AgentLoopWorker._compute_position_ids = _compute_position_ids_with_audio
-
-
 @OmniModelBase.register("Qwen3OmniMoeForConditionalGeneration", stage="thinker")
 class Qwen3OmniThinkerAdapter(OmniModelBase):
     """Thinker-stage training adapter for Qwen3-Omni.
@@ -138,9 +81,11 @@ class Qwen3OmniThinkerAdapter(OmniModelBase):
             The configured processor with RoPE and dedup helpers bound.
         """
         import types
+        from functools import partial
 
         from transformers import AutoConfig, AutoProcessor
         from transformers.models.qwen3_omni_moe import Qwen3OmniMoeThinkerForConditionalGeneration
+        from verl.experimental.agent_loop.agent_loop import AgentLoopWorker
 
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=model_config.trust_remote_code)
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=model_config.trust_remote_code)
@@ -158,7 +103,47 @@ class Qwen3OmniThinkerAdapter(OmniModelBase):
 
         processor.get_rope_index = types.MethodType(_get_rope_index_long, processor)
         processor.get_llm_pos_ids_for_vision = types.MethodType(model_cls.get_llm_pos_ids_for_vision, processor)
-        _patch_agent_loop_audio_rope_for_qwen3_omni()
+
+        # verl's generic V1 agent loop forwards image/video grids to
+        # get_rope_index, while Qwen3-Omni also requires raw audio lengths.
+        original_compute_position_ids = AgentLoopWorker._compute_position_ids
+        if not getattr(original_compute_position_ids, "_verl_qwen3_omni_audio_rope_patch", False):
+
+            def _compute_position_ids_with_audio(
+                self,
+                input_ids,
+                attention_mask,
+                multi_modal_inputs,
+                mm_processor_kwargs=None,
+            ):
+                feature_attention_mask = multi_modal_inputs.get("feature_attention_mask")
+                if feature_attention_mask is None:
+                    return original_compute_position_ids(
+                        self,
+                        input_ids,
+                        attention_mask,
+                        multi_modal_inputs,
+                        mm_processor_kwargs,
+                    )
+
+                original_get_rope_index = self.processor.get_rope_index
+                self.processor.get_rope_index = partial(
+                    original_get_rope_index,
+                    audio_seqlens=feature_attention_mask.sum(-1),
+                )
+                try:
+                    return original_compute_position_ids(
+                        self,
+                        input_ids,
+                        attention_mask,
+                        multi_modal_inputs,
+                        mm_processor_kwargs,
+                    )
+                finally:
+                    self.processor.get_rope_index = original_get_rope_index
+
+            _compute_position_ids_with_audio._verl_qwen3_omni_audio_rope_patch = True
+            AgentLoopWorker._compute_position_ids = _compute_position_ids_with_audio
 
         # Collapse consecutive multimodal pad tokens before vLLM-Omni re-expands
         # them (token-IDs path still unfixed: https://github.com/vllm-project/vllm/issues/33672);

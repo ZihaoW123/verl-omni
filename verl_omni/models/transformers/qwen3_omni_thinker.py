@@ -17,10 +17,6 @@ for Qwen3-Omni."""
 
 import logging
 
-from verl_omni.pipelines.qwen3_omni.thinker_training_adapter import (
-    _patch_agent_loop_audio_rope_for_qwen3_omni,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -153,7 +149,6 @@ def patch_hf_processor_for_qwen3_omni() -> None:
 
             processor.get_rope_index = _get_rope_index_long
             processor.get_llm_pos_ids_for_vision = types.MethodType(model_class.get_llm_pos_ids_for_vision, processor)
-            _patch_agent_loop_audio_rope_for_qwen3_omni()
 
             def _dedup_pad_tokens(self, prompt_ids: list[int]) -> list[int]:
                 """Collapse consecutive multimodal pad tokens to one.
@@ -422,7 +417,6 @@ def apply_qwen3_omni_thinker_patches() -> None:
     """Apply all Qwen3-Omni Thinker patches (idempotent registrations)."""
     _register_qwen3_omni_automodel()
     patch_hf_processor_for_qwen3_omni()
-    _patch_agent_loop_audio_rope_for_qwen3_omni()
     _patch_unfuse_qwen3_omni_thinker_experts()
     patch_hf_tokenizer_for_qwen3_omni()
     patch_register_vllm_moe_model_weight_loader()
