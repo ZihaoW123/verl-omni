@@ -38,5 +38,7 @@ def test_avqa_npu_launcher_uses_v1_without_changing_legacy_launcher():
     assert "actor_rollout_ref.actor.strategy=fsdp" in avqa_launcher
     assert "actor_rollout_ref.ref.strategy=fsdp" in avqa_launcher
     assert "data.custom_cls.name=OmniRLHFDataset" in avqa_launcher
+    assert "reward.reward_manager.source=register" in avqa_launcher
+    assert "reward.reward_manager.name=naive" in avqa_launcher
     assert "reward.custom_reward_function.path=verl_omni/utils/reward_score/choice_reward.py" in avqa_launcher
     assert "actor_rollout_ref.rollout.gpu_memory_utilization=0.8" in avqa_launcher
