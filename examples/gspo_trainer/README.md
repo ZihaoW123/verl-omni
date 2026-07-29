@@ -12,6 +12,8 @@ Both **GPU** and **NPU** training platforms are supported:
   — **GPU**, **LoRA (r=32)** on a single node with **4 × H100/H200 80GB**.
 - [`run_qwen3_omni_thinker_gspo_npu.sh`](qwen3_omni/run_qwen3_omni_thinker_gspo_npu.sh)
   — **NPU**, **full-parameter** on a single **Atlas 800T A3** node with **16 NPUs**.
+- [`run_qwen3_omni_thinker_gspo_npu_avqa.sh`](qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa.sh)
+  — **NPU**, **full-parameter V1** for text + image + audio AVQA training.
 
 For the base environment setup, see the [installation guide](../../docs/start/install.md).
 
@@ -38,19 +40,20 @@ Verify:
 python -c "import verl, verl_omni, vllm, vllm_omni; print('OK')"
 ```
 
-The recommended GPU and NPU launchers both use
-`verl_omni.trainer.main_omni` and set
+The GPU V1 and AVQA NPU launchers use `verl_omni.trainer.main_omni` and set
 `VERL_USE_EXTERNAL_MODULES=verl_omni`. Processor/model setup is handled by the
 registered Qwen3-Omni V1 adapter, so these launchers do not load the deprecated
-model monkey-patches through `external_lib`.
+model monkey-patches through `external_lib`. The existing generic NPU launcher
+is left unchanged for backward compatibility.
 
 The launchers colocate the FSDP actor and the `vllm-omni` rollout on the same
 devices. `run_qwen3_omni_thinker_gspo_lora_v1.sh` targets a single node with
 **4 × H100/H200 80GB**; `run_qwen3_omni_thinker_gspo_npu.sh` targets a single
 **Atlas 800T A3** node with **16 NPUs** (full-parameter FSDP actor, rollout
-TP=2). The NPU launcher dynamically generates a thinker-only deploy config for
-each rollout replica from that replica's visible devices, avoiding cross-replica
-device-rank collisions. Multi-node is not yet validated on either platform.
+TP=2). The AVQA NPU launcher dynamically generates a thinker-only deploy config
+for each rollout replica from that replica's visible devices, avoiding
+cross-replica device-rank collisions. Multi-node is not yet validated on either
+platform.
 
 > **Deprecated:** `run_qwen3_omni_thinker_gspo_lora.sh` retains the old
 > `verl.trainer.main_ppo` and model monkey-patch path for backward compatibility.
@@ -247,34 +250,21 @@ worker.
 
 ### Run NPU training
 
-Use the shared NPU launcher with AVQA-specific data, dataset, reward, and
-sequence-length overrides. It keeps the full-parameter FSDP, 16-NPU, rollout
-TP=2, eight-agent-worker topology from `run_qwen3_omni_thinker_gspo_npu.sh`.
+Use the dedicated V1 AVQA NPU launcher. It keeps full-parameter FSDP, a 16-NPU
+topology, rollout TP=2, and eight rollout workers without changing the existing
+generic NPU script.
 
 ```bash
 TRAIN_FILE=$HOME/data/avqa_r1_6k/train.parquet \
 VAL_FILE=$HOME/data/avqa_r1_6k/validation.parquet \
 MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
-bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu.sh \
-    data.max_prompt_length=2048 \
-    data.max_response_length=512 \
-    data.val_max_samples=512 \
-    data.custom_cls.path=pkg://verl_omni.utils.dataset.omni_rl_datasets \
-    data.custom_cls.name=OmniRLHFDataset \
-    ++data.mm_processor_kwargs.sampling_rate=16000 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
-    reward.custom_reward_function.path=verl_omni/utils/reward_score/choice_reward.py \
-    reward.custom_reward_function.name=compute_score \
-    trainer.project_name=qwen3_omni_avqa \
-    trainer.experiment_name=gspo_avqa_npu \
-    trainer.test_freq=20 \
-    trainer.total_epochs=3
+bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa.sh
 ```
 
-These overrides use a 2048-token multimodal prompt budget and a 512-token
-response budget, register the audio-aware dataset class by importable package
-path so multiprocessing preserves its `RLHFDataset` base class, raise rollout
-GPU/NPU memory utilization from the launcher's `0.6` default to `0.8`, and wire
+The launcher uses a 2048-token multimodal prompt budget and a 512-token response
+budget, registers the audio-aware dataset class by importable package path so
+multiprocessing preserves its `RLHFDataset` base class, sets rollout NPU memory
+utilization to `0.8`, and wires
 [`choice_reward.py`](../../verl_omni/utils/reward_score/choice_reward.py). It
 extracts the first `<answer>...</answer>` payload and returns a binary exact-match
 reward against the tagged dataset label.
@@ -297,9 +287,11 @@ examples/gspo_trainer/
 │   ├── run_qwen3_omni_thinker_gspo_lora_mmk12_v1.sh  ← V1 launch script (GPU, LoRA r=32, image)
 │   ├── run_qwen3_omni_thinker_gspo_lora.sh           ← deprecated (old main_ppo entrypoint)
 │   ├── run_qwen3_omni_thinker_gspo_npu.sh            ← launch script (NPU, full-parameter)
+│   ├── run_qwen3_omni_thinker_gspo_npu_avqa.sh       ← V1 launch script (NPU, AVQA)
 │   ├── config/
-│   │   └── qwen3_omni_thinker_gspo.yaml              ← deprecated main_ppo recipe config
-│   └── qwen3_omni_thinker_only.yaml                  ← deprecated GPU stage config
+│   │   └── qwen3_omni_thinker_gspo.yaml              ← main_ppo recipe config
+│   ├── qwen3_omni_thinker_only.yaml                  ← GPU stage config
+│   └── qwen3_omni_thinker_only_npu.yaml              ← NPU stage config
 ├── data_process/
 │   ├── mmk12.py                                      ← MMK12 → verl RL parquet converter
 │   └── avqa.py                                       ← AVQA → verl RL parquet converter

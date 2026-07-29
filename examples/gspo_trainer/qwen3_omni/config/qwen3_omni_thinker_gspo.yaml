@@ -1,8 +1,8 @@
-# Deprecated Qwen3-Omni Thinker main_ppo recipe.
+# Qwen3-Omni Thinker GSPO + LoRA training config (FSDP + vLLM-Omni AR rollout).
 #
-# Kept only for run_qwen3_omni_thinker_gspo_lora.sh backward compatibility.
-# Recommended GPU and NPU launchers use verl_omni.trainer.main_omni with pure
-# CLI overrides and do not load this file.
+# Inherits verl's default ppo_trainer config and overrides the recipe-specific
+# fields below. Volatile values (data/model paths, GPU/node counts, the
+# vLLM-Omni stage config path) are left to be set via CLI in the run script.
 #
 # Launch with:
 #   python3 -m verl.trainer.main_ppo \
@@ -72,7 +72,10 @@ actor_rollout_ref:
     top_p: 0.9
     top_k: -1
     tensor_model_parallel_size: 4
-    # The deprecated GPU launcher supplies a static stage config.
+    # NOTE: engine memory/batching (gpu_memory_utilization, max_num_seqs, dtype,
+    # load_format, LoRA, ...) is set in the vLLM-Omni stage config
+    # (qwen3_omni_thinker_only.yaml). vLLM-Omni ignores these top-level args when
+    # stage_configs_path is set, so they are intentionally not duplicated here.
     calculate_log_probs: true
     load_format: safetensors
     layered_summon: true
