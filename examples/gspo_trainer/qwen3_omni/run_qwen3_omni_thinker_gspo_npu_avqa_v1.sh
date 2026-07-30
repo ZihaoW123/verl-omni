@@ -98,4 +98,4 @@ python3 -m verl_omni.trainer.main_omni \
     trainer.test_freq=10 \
     trainer.total_epochs=10 \
     "$@" \
-    2>&1 | tee run_qwen3omni_npu_v1_align_mmk12_gbs128.log
+    2>&1 | tee run_qwen3omni_npu_avqa_v1.log
