@@ -261,13 +261,13 @@ MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
 bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh
 ```
 
-The launcher uses a 4096-token multimodal prompt budget, a 12288-token response
+The launcher uses a 4096-token multimodal prompt budget, an 8192-token response
 budget, and 128 prompts with 16 responses each per rollout. It trains for 10
 epochs, caps dynamic actor and log-prob batches at 20480 tokens per NPU, and
 computes entropy in 2048-token chunks to reduce peak NPU memory. It registers
 the audio-aware dataset class by importable package path so multiprocessing
 preserves its `RLHFDataset` base class, sets rollout NPU memory utilization to
-`0.8`, and wires
+`0.6`, uses deterministic validation, and wires
 [`choice_reward.py`](../../verl_omni/utils/reward_score/choice_reward.py). It
 extracts the first `<answer>...</answer>` payload and returns a binary exact-match
 reward against the tagged dataset label.
