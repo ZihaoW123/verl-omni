@@ -250,9 +250,9 @@ worker.
 
 ### Run NPU training
 
-Use the dedicated V1 AVQA NPU launcher. It keeps full-parameter FSDP, a 16-NPU
-topology, rollout TP=2, and eight rollout workers without changing the existing
-generic NPU script.
+Use the dedicated V1 AVQA NPU launcher. It uses FSDP2 with CPU offload, a
+16-NPU topology, rollout TP=4, and four rollout workers without changing the
+existing generic NPU script.
 
 ```bash
 TRAIN_FILE=$HOME/data/avqa_r1_6k/train.parquet \
@@ -261,10 +261,13 @@ MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
 bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh
 ```
 
-The launcher uses a 2048-token multimodal prompt budget and a 512-token response
-budget, registers the audio-aware dataset class by importable package path so
-multiprocessing preserves its `RLHFDataset` base class, sets rollout NPU memory
-utilization to `0.8`, and wires
+The launcher uses a 4096-token multimodal prompt budget, a 12288-token response
+budget, and 128 prompts with 16 responses each per rollout. It trains for 10
+epochs, caps dynamic actor and log-prob batches at 20480 tokens per NPU, and
+computes entropy in 2048-token chunks to reduce peak NPU memory. It registers
+the audio-aware dataset class by importable package path so multiprocessing
+preserves its `RLHFDataset` base class, sets rollout NPU memory utilization to
+`0.8`, and wires
 [`choice_reward.py`](../../verl_omni/utils/reward_score/choice_reward.py). It
 extracts the first `<answer>...</answer>` payload and returns a binary exact-match
 reward against the tagged dataset label.
