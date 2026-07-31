@@ -20,6 +20,7 @@ import warnings
 
 import torch
 import torch.nn.functional as F
+from verl.utils.device import get_device_name
 
 _AUDIO_SAMPLE_RATE = 16_000
 _AUDIO_NUM_MEL_BINS = 128
@@ -33,7 +34,7 @@ _VISION_MEAN = (0.48145466, 0.4578275, 0.40821073)
 _VISION_STD = (0.26862954, 0.26130258, 0.27577711)
 _MODEL_CACHE = {}
 _MODEL_LOCK = threading.Lock()
-_DEFAULT_MODEL = '.checkpoints/imagebind_huge.pth'
+_DEFAULT_MODEL = ".checkpoints/imagebind_huge.pth"
 
 
 def _load_imagebind(device: str, model_path: str):
@@ -49,19 +50,17 @@ def _load_imagebind(device: str, model_path: str):
             "ImageBind is licensed CC-BY-NC-SA 4.0 (NonCommercial).",
             stacklevel=2,
         )
-        
+
         model = imagebind_model.imagebind_huge(pretrained=False)
         if not os.path.exists(model_path):
-            print(
-                "Downloading imagebind weights to .checkpoints/imagebind_huge.pth ..."
-            )
+            print("Downloading imagebind weights to .checkpoints/imagebind_huge.pth ...")
             os.makedirs(".checkpoints", exist_ok=True)
             torch.hub.download_url_to_file(
                 "https://dl.fbaipublicfiles.com/imagebind/imagebind_huge.pth",
                 _DEFAULT_MODEL,
                 progress=True,
             )
-        
+
         model.load_state_dict(torch.load(model_path, weights_only=True))
         _MODEL_CACHE[device] = model.to(device).eval()
     return _MODEL_CACHE[device]
@@ -176,7 +175,7 @@ def compute_score_imagebind_audio_video(
     solution_image,
     ground_truth: str,
     extra_info: dict,
-    device: str = "cuda",
+    device: str | None = None,
     model_name_or_path: str = _DEFAULT_MODEL,
     **kwargs,
 ) -> dict:
@@ -187,6 +186,7 @@ def compute_score_imagebind_audio_video(
     except ImportError as exc:
         raise ImportError("ImageBind reward requires the non-commercial ImageBind package.") from exc
 
+    device = device or get_device_name()
     audio = extra_info.get("audio")
     if audio is None:
         raise KeyError("ImageBind reward requires decoded audio in extra_info['audio'].")

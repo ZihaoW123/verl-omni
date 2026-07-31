@@ -19,6 +19,7 @@ import threading
 import numpy as np
 import torch
 import torch.nn.functional as F
+from verl.utils.device import get_device_name
 
 _CLAP_SAMPLE_RATE = 48_000
 _DEFAULT_MODEL = "laion/larger_clap_general"
@@ -62,7 +63,7 @@ def compute_score_clap(
     solution_image,
     ground_truth: str,
     extra_info: dict,
-    device: str = "cuda",
+    device: str | None = None,
     model_name_or_path: str = _DEFAULT_MODEL,
     **kwargs,
 ) -> dict:
@@ -70,6 +71,7 @@ def compute_score_clap(
     del data_source, solution_image, kwargs
     import torchaudio.functional as audio_functional
 
+    device = device or get_device_name()
     waveform, source_rate = _get_audio(extra_info)
     if source_rate != _CLAP_SAMPLE_RATE:
         waveform = audio_functional.resample(

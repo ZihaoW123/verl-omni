@@ -72,7 +72,7 @@ from verl_omni.trainer.diffusion.rollout_correction import (
     rollout_correction_enabled,
 )
 from verl_omni.utils.reward_score.reward_utils import video_tensor_to_pil_frames
-from verl_omni.utils.tracking import wrap_val_samples_for_wandb
+from verl_omni.utils.tracking import batch_items, wrap_val_samples_for_wandb
 from verl_omni.workers.utils.padding import embeds_padding_2_no_padding
 
 sys_logger = logging.getLogger(__name__)
@@ -372,7 +372,7 @@ class BaseRayDiffusionTrainer(ABC):
                 fps=int(self.config.trainer.get("video_fps", 24)),
             )
 
-    def _maybe_log_val_generations(self, inputs, outputs, scores):
+    def _maybe_log_val_generations(self, inputs, outputs, scores, audios=None, audio_sample_rates=None):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
         generations_to_log = self.config.trainer.log_val_generations
@@ -384,8 +384,9 @@ class BaseRayDiffusionTrainer(ABC):
 
         import numpy as np
 
-        # Create tuples of (input, output, score) and sort by input text
-        samples = list(zip(inputs, list(outputs), scores, strict=True))
+        audios = batch_items(audios, len(inputs), "audio")
+        audio_sample_rates = batch_items(audio_sample_rates, len(inputs), "audio_sample_rate")
+        samples = list(zip(inputs, list(outputs), scores, audios, audio_sample_rates, strict=True))
         samples.sort(key=lambda x: x[0])  # Sort by input text
 
         # Use fixed random seed for deterministic shuffling
@@ -401,6 +402,8 @@ class BaseRayDiffusionTrainer(ABC):
             samples, video_tmp_dir = wrap_val_samples_for_wandb(
                 samples, fps=int(self.config.trainer.get("video_fps", 24))
             )
+        else:
+            samples = [(input_, output, score) for input_, output, score, _, _ in samples]
 
         # Log to each configured logger
         try:
@@ -440,6 +443,8 @@ class BaseRayDiffusionTrainer(ABC):
         # Lists to collect samples for the table
         sample_inputs = []
         sample_outputs = []
+        sample_audios = []
+        sample_audio_sample_rates = []
         sample_gts = []
         sample_scores = []
         sample_turns = []
@@ -494,6 +499,15 @@ class BaseRayDiffusionTrainer(ABC):
             # Store generated outputs
             output_images = test_output_gen_batch.batch["responses"]
             sample_outputs.append(output_images)
+            batch_size = len(output_images)
+            sample_audios.extend(batch_items(test_output_gen_batch.batch.get("audio"), batch_size, "audio"))
+            sample_audio_sample_rates.extend(
+                batch_items(
+                    test_output_gen_batch.non_tensor_batch.get("audio_sample_rate"),
+                    batch_size,
+                    "audio_sample_rate",
+                )
+            )
 
             test_batch = test_batch.union(test_output_gen_batch)
             test_batch.meta_info["validate"] = True
@@ -526,7 +540,13 @@ class BaseRayDiffusionTrainer(ABC):
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
         sample_outputs = torch.cat(sample_outputs, dim=0)
-        self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
+        self._maybe_log_val_generations(
+            inputs=sample_inputs,
+            outputs=sample_outputs,
+            scores=sample_scores,
+            audios=sample_audios,
+            audio_sample_rates=sample_audio_sample_rates,
+        )
 
         # dump generations
         val_data_dir = self.config.trainer.get("validation_data_dir", None)

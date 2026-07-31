@@ -94,6 +94,7 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.rollout.pipeline.num_inference_steps=8 \
     actor_rollout_ref.rollout.pipeline.guidance_scale=1.0 \
     actor_rollout_ref.rollout.pipeline.max_sequence_length=1024 \
+    actor_rollout_ref.rollout.pipeline.output_type=pt \
     actor_rollout_ref.rollout.algo.noise_level=0.8 \
     actor_rollout_ref.rollout.algo.sde_type=cps \
     actor_rollout_ref.rollout.algo.sde_steps="[0,1,2,3,4,5,6,7,8,9]" \
@@ -105,6 +106,7 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.rollout.val_kwargs.pipeline.frame_rate=12.0 \
     actor_rollout_ref.rollout.val_kwargs.pipeline.num_inference_steps=12 \
     actor_rollout_ref.rollout.val_kwargs.pipeline.guidance_scale=4.0 \
+    actor_rollout_ref.rollout.val_kwargs.pipeline.output_type=pt \
     actor_rollout_ref.rollout.val_kwargs.algo.noise_level=0.0 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
     reward.num_workers=$REWARD_NUM_WORKERS \
@@ -123,13 +125,14 @@ python3 -m verl_omni.trainer.main_diffusion \
     '+reward.reward_functions.imagebind.weight=1.0' \
     "+reward.reward_functions.imagebind.device=$REWARD_DEVICE" \
     reward.aggregation=weighted_sum \
-    trainer.logger='["console","tensorboard"]' \
+    trainer.logger='["console","tensorboard","wandb"]' \
     trainer.project_name=flow_grpo_npu \
     trainer.experiment_name=ltx2_3_t2av_lora_npu \
     trainer.default_local_dir=$checkpoint_dir \
     trainer.resume_mode=disable \
     +trainer.rollout_data_dir=$rollout_data_dir \
     trainer.log_val_generations=8 \
+    trainer.video_fps=12 \
     trainer.val_before_train=False \
     trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=1 \
