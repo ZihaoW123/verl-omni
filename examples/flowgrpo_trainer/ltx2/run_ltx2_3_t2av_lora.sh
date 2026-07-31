@@ -2,6 +2,8 @@
 # LTX-2.3 text-to-audio-video LoRA FlowGRPO recipe.
 set -x
 
+export WANDB_MODE=${WANDB_MODE:-offline}
+
 WORKSPACE=${WORKSPACE:-$HOME}
 MODEL_PATH=${MODEL_PATH:-dg845/LTX-2.3-Diffusers}
 DATA_DIR=${DATA_DIR:-$WORKSPACE/data/vid_prompt/verl_omni}

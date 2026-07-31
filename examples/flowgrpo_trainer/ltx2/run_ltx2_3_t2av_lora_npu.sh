@@ -2,6 +2,7 @@
 # LTX-2.3 text-to-audio-video LoRA FlowGRPO recipe (Ascend NPU).
 set -x
 
+export WANDB_MODE=${WANDB_MODE:-offline}
 export VERL_DATAPROTO_SERIALIZATION_METHOD=numpy
 ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/ascend-toolkit}
 
