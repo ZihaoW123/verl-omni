@@ -261,7 +261,7 @@ MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
 bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh
 ```
 
-The launcher uses a 4096-token multimodal prompt budget, an 8192-token response
+The launcher uses a 4096-token multimodal prompt budget, a 12288-token response
 budget, and 128 prompts with 16 responses each per rollout. It trains for 10
 epochs, caps dynamic actor and log-prob batches at 20480 tokens per NPU, and
 computes entropy in 2048-token chunks to reduce peak NPU memory. It registers

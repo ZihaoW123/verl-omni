@@ -42,7 +42,9 @@ def test_avqa_npu_launcher_uses_v1_without_changing_legacy_launcher():
     assert "actor_rollout_ref.rollout.gpu_memory_utilization=0.6" in avqa_launcher
     assert "data.train_batch_size=128" in avqa_launcher
     assert "data.max_prompt_length=4096" in avqa_launcher
-    assert "data.max_response_length=8192" in avqa_launcher
+    assert "data.max_response_length=12288" in avqa_launcher
+    assert "data.shuffle=true" in avqa_launcher
+    assert "data.seed=42" in avqa_launcher
     assert "data.val_max_samples=-1" in avqa_launcher
     assert "data.truncation=error" in avqa_launcher
     assert "actor_rollout_ref.actor.ppo_mini_batch_size=16" in avqa_launcher
@@ -56,7 +58,7 @@ def test_avqa_npu_launcher_uses_v1_without_changing_legacy_launcher():
     assert "actor_rollout_ref.rollout.val_kwargs.top_p=1.0" in avqa_launcher
     assert "actor_rollout_ref.rollout.val_kwargs.top_k=-1" in avqa_launcher
     assert "actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=20480" in avqa_launcher
-    assert "algorithm.rollout_correction.rollout_is=token" in avqa_launcher
-    assert "algorithm.rollout_correction.rollout_is_threshold=2.0" in avqa_launcher
+    assert "algorithm.rollout_correction.rollout_is=" not in avqa_launcher
+    assert "algorithm.rollout_correction.rollout_is_threshold=" not in avqa_launcher
     assert "trainer.val_before_train=true" in avqa_launcher
     assert "trainer.total_epochs=10" in avqa_launcher

@@ -24,7 +24,9 @@ python3 -m verl_omni.trainer.main_omni \
     data.val_files="${VAL_FILE}" \
     data.train_batch_size=128 \
     data.max_prompt_length=4096 \
-    data.max_response_length=8192 \
+    data.max_response_length=12288 \
+    data.shuffle=true \
+    data.seed=42 \
     data.val_max_samples=-1 \
     data.validation_shuffle=false \
     data.filter_overlong_prompts=true \
@@ -85,8 +87,6 @@ python3 -m verl_omni.trainer.main_omni \
     actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=false \
-    algorithm.rollout_correction.rollout_is=token \
-    algorithm.rollout_correction.rollout_is_threshold=2.0 \
     reward.reward_manager.source=register \
     reward.reward_manager.name=naive \
     reward.custom_reward_function.path=verl_omni/utils/reward_score/choice_reward.py \
