@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Audio-text alignment reward for LTX-2.3 using LAION CLAP."""
+"""Text-audio alignment reward using LAION CLAP."""
 
 import threading
 
@@ -58,7 +58,7 @@ def _load_clap(model_name_or_path: str, device: str):
     return _MODEL_CACHE[key]
 
 
-def compute_score_clap(
+def compute_score(
     data_source: str,
     solution_image,
     ground_truth: str,

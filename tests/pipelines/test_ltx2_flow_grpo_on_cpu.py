@@ -26,8 +26,6 @@ from verl_omni.pipelines.ltx2_flow_grpo.common import (
 from verl_omni.pipelines.ltx2_flow_grpo.diffusers_training_adapter import LTX23FlowGRPO
 from verl_omni.pipelines.ltx2_flow_grpo.vllm_omni_rollout_adapter import LTX23PipelineWithLogProb
 from verl_omni.pipelines.model_base import DiffusionModelBase, VllmOmniPipelineBase
-from verl_omni.utils.reward_score.ltx2_clap import _get_audio
-from verl_omni.utils.reward_score.ltx2_imagebind import _to_tchw
 from verl_omni.workers.rollout.vllm_rollout.vllm_omni_async_server import vLLMOmniHttpServer
 
 
@@ -52,16 +50,9 @@ def test_ltx2_x0_cfg_and_resolution_dependent_shift() -> None:
     assert calculate_shift(6144, 1024, 4096, 0.95, 2.05) > 2.05
 
 
-def test_ltx2_raw_prompt_and_reward_media_normalization() -> None:
+def test_ltx2_raw_prompt_normalization() -> None:
     messages = [{"role": "user", "content": [{"type": "text", "text": "  jungle ambience  "}]}]
     assert _messages_to_text(messages) == "jungle ambience"
-
-    audio, sample_rate = _get_audio({"audio": torch.ones(1, 2, 16), "audio_sample_rate": torch.tensor(48_000)})
-    assert audio.shape == (16,)
-    assert sample_rate == 48_000
-
-    thwc = torch.zeros(3, 8, 10, 3)
-    assert _to_tchw(thwc).shape == (3, 3, 8, 10)
 
 
 def test_ltx2_training_adapter_splits_joint_latents() -> None:

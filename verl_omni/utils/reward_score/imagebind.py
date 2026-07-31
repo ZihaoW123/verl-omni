@@ -12,11 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Audio-video semantic alignment reward for LTX-2.3 using ImageBind."""
+"""Cross-modal semantic alignment rewards using Meta ImageBind.
+
+Supported modes match FlowFactory's ImageBind reward:
+``audio_video``, ``text_audio``, ``text_video``, and their weighted ``all``
+combination.
+"""
 
 import os
 import threading
 import warnings
+from collections.abc import Mapping
 
 import torch
 import torch.nn.functional as F
@@ -34,11 +40,20 @@ _VISION_MEAN = (0.48145466, 0.4578275, 0.40821073)
 _VISION_STD = (0.26862954, 0.26130258, 0.27577711)
 _MODEL_CACHE = {}
 _MODEL_LOCK = threading.Lock()
-_DEFAULT_MODEL = ".checkpoints/imagebind_huge.pth"
+_DEFAULT_MODEL_PATH = ".checkpoints/imagebind_huge.pth"
+_DEFAULT_MODE = "audio_video"
+_PAIR_MODES = ("audio_video", "text_audio", "text_video")
+_SUPPORTED_MODES = (*_PAIR_MODES, "all")
+_DEFAULT_WEIGHTS = {
+    "audio_video": 0.5,
+    "text_audio": 0.25,
+    "text_video": 0.25,
+}
 
 
 def _load_imagebind(device: str, model_path: str):
-    if device not in _MODEL_CACHE:
+    key = (model_path, device)
+    if key not in _MODEL_CACHE:
         try:
             from imagebind.models import imagebind_model
         except ImportError as exc:
@@ -53,17 +68,17 @@ def _load_imagebind(device: str, model_path: str):
 
         model = imagebind_model.imagebind_huge(pretrained=False)
         if not os.path.exists(model_path):
-            print("Downloading imagebind weights to .checkpoints/imagebind_huge.pth ...")
-            os.makedirs(".checkpoints", exist_ok=True)
+            print(f"Downloading ImageBind weights to {model_path} ...")
+            os.makedirs(os.path.dirname(os.path.abspath(model_path)), exist_ok=True)
             torch.hub.download_url_to_file(
                 "https://dl.fbaipublicfiles.com/imagebind/imagebind_huge.pth",
-                _DEFAULT_MODEL,
+                model_path,
                 progress=True,
             )
 
         model.load_state_dict(torch.load(model_path, weights_only=True))
-        _MODEL_CACHE[device] = model.to(device).eval()
-    return _MODEL_CACHE[device]
+        _MODEL_CACHE[key] = model.to(device).eval()
+    return _MODEL_CACHE[key]
 
 
 def _normalize_audio(audio, source_rate: int) -> torch.Tensor:
@@ -170,41 +185,94 @@ def _preprocess_video(video, device: str) -> torch.Tensor:
     return torch.stack(clips).unsqueeze(0).to(device)
 
 
-def compute_score_imagebind_audio_video(
+def _preprocess_text(text: str, device: str) -> torch.Tensor:
+    try:
+        from imagebind.data import load_and_transform_text
+    except ImportError as exc:
+        raise ImportError("ImageBind text rewards require imagebind.data.load_and_transform_text.") from exc
+    return load_and_transform_text([text], device)
+
+
+def _cosine_similarity(first: torch.Tensor, second: torch.Tensor) -> float:
+    first = F.normalize(first, dim=-1)
+    second = F.normalize(second, dim=-1)
+    return (first * second).sum(dim=-1)[0].float().item()
+
+
+def _compute_similarities(embeddings: dict, modality_type) -> dict[str, float]:
+    modality_pairs = {
+        "audio_video": (modality_type.AUDIO, modality_type.VISION),
+        "text_audio": (modality_type.TEXT, modality_type.AUDIO),
+        "text_video": (modality_type.TEXT, modality_type.VISION),
+    }
+    return {
+        name: _cosine_similarity(embeddings[first], embeddings[second])
+        for name, (first, second) in modality_pairs.items()
+        if first in embeddings and second in embeddings
+    }
+
+
+def _aggregate_similarities(similarities: dict[str, float], weights: Mapping[str, float] | None) -> float:
+    selected_weights = _DEFAULT_WEIGHTS if weights is None else weights
+    missing = set(_PAIR_MODES) - set(selected_weights)
+    if missing:
+        raise ValueError(f"ImageBind weights are missing modes: {sorted(missing)}.")
+    return sum(float(selected_weights[name]) * similarities[name] for name in _PAIR_MODES)
+
+
+def compute_score(
     data_source: str,
     solution_image,
     ground_truth: str,
     extra_info: dict,
     device: str | None = None,
-    model_name_or_path: str = _DEFAULT_MODEL,
+    model_name_or_path: str = _DEFAULT_MODEL_PATH,
+    mode: str = _DEFAULT_MODE,
+    weights: Mapping[str, float] | None = None,
     **kwargs,
 ) -> dict:
-    """Compute ImageBind cosine similarity between generated audio and video."""
-    del data_source, ground_truth, kwargs
+    """Compute a configured ImageBind cross-modal cosine similarity."""
+    del data_source, kwargs
     try:
         from imagebind.models.imagebind_model import ModalityType
     except ImportError as exc:
         raise ImportError("ImageBind reward requires the non-commercial ImageBind package.") from exc
 
+    if mode not in _SUPPORTED_MODES:
+        raise ValueError(f"Unknown ImageBind mode {mode!r}; expected one of: {', '.join(_SUPPORTED_MODES)}.")
+
     device = device or get_device_name()
-    audio = extra_info.get("audio")
-    if audio is None:
-        raise KeyError("ImageBind reward requires decoded audio in extra_info['audio'].")
-    sample_rate = extra_info.get("audio_sample_rate", _AUDIO_CLIP_SAMPLES)
-    if isinstance(sample_rate, torch.Tensor):
-        sample_rate = sample_rate.item()
-    if sample_rate is None:
-        raise KeyError("ImageBind reward requires extra_info['audio_sample_rate'].")
+    need_text = mode in {"text_audio", "text_video", "all"}
+    need_audio = mode in {"audio_video", "text_audio", "all"}
+    need_video = mode in {"audio_video", "text_video", "all"}
+
+    inputs = {}
+    if need_text:
+        inputs[ModalityType.TEXT] = _preprocess_text(ground_truth or "", device)
+    if need_audio:
+        audio = extra_info.get("audio")
+        if audio is None:
+            raise KeyError("ImageBind reward requires decoded audio in extra_info['audio'].")
+        sample_rate = extra_info.get("audio_sample_rate", _AUDIO_SAMPLE_RATE)
+        if isinstance(sample_rate, torch.Tensor):
+            sample_rate = sample_rate.item()
+        if sample_rate is None:
+            raise KeyError("ImageBind reward requires extra_info['audio_sample_rate'].")
+        inputs[ModalityType.AUDIO] = _preprocess_audio(audio, int(sample_rate), device)
+    if need_video:
+        if solution_image is None:
+            raise ValueError("ImageBind reward requires video in solution_image.")
+        inputs[ModalityType.VISION] = _preprocess_video(solution_image, device)
 
     with _MODEL_LOCK, torch.no_grad():
         model = _load_imagebind(device, model_name_or_path)
-        embeddings = model(
-            {
-                ModalityType.AUDIO: _preprocess_audio(audio, int(sample_rate), device),
-                ModalityType.VISION: _preprocess_video(solution_image, device),
-            }
-        )
-        audio_embedding = F.normalize(embeddings[ModalityType.AUDIO], dim=-1)
-        video_embedding = F.normalize(embeddings[ModalityType.VISION], dim=-1)
-        score = (audio_embedding * video_embedding).sum(dim=-1)[0].float().item()
-    return {"score": score}
+        embeddings = model(inputs)
+        similarities = _compute_similarities(embeddings, ModalityType)
+
+    if mode == "all":
+        score = _aggregate_similarities(similarities, weights)
+        return {
+            "score": score,
+            **{f"{name}_similarity": value for name, value in similarities.items()},
+        }
+    return {"score": similarities[mode]}
