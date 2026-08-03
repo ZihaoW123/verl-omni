@@ -29,33 +29,17 @@ def _load_module():
 
 choice_reward = _load_module()
 compute_score = choice_reward.compute_score
-extract_answer = choice_reward.extract_answer
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
+    ("response", "ground_truth", "expected"),
     [
-        ("<answer>B</answer>", "B"),
-        ("reasoning... <answer> C </answer>", "C"),
-        ("<answer>\\boxed{D}</answer>", "\\boxed{D}"),
-        ("The final answer is D.", ""),
+        ("reasoning <answer>B</answer>", "<answer>B</answer>", 1.0),
+        ("<answer>A</answer>", "<answer>B</answer>", 0.0),
+        ("The final answer is B.", "<answer>B</answer>", 0.0),
+        ("<answer>b</answer>", "<answer>B</answer>", 0.0),
+        ("<answer>A</answer><answer>B</answer>", "<answer>A</answer>", 1.0),
     ],
 )
-def test_extract_answer_matches_relax_behavior(text, expected):
-    assert extract_answer(text) == expected
-
-
-def test_compute_score_rewards_exact_tagged_answer():
-    result = compute_score("reasoning <answer>B</answer>", "<answer>B</answer>")
-    assert result == {"score": 1.0, "accuracy": 1.0}
-
-
-@pytest.mark.parametrize("response", ["<answer>A</answer>", "The final answer is B.", "<answer>b</answer>"])
-def test_compute_score_rejects_non_exact_answer(response):
-    result = compute_score(response, "<answer>B</answer>")
-    assert result == {"score": 0.0, "accuracy": 0.0}
-
-
-def test_compute_score_uses_first_answer_tag_like_relax():
-    result = compute_score("<answer>A</answer><answer>B</answer>", "<answer>A</answer>")
-    assert result == {"score": 1.0, "accuracy": 1.0}
+def test_compute_score_uses_first_tag_and_exact_match(response, ground_truth, expected):
+    assert compute_score(response, ground_truth) == {"score": expected, "accuracy": expected}

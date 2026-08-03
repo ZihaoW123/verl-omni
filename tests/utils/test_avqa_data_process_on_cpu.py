@@ -16,7 +16,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-import pandas as pd
 import pyarrow.parquet as pq
 
 
@@ -47,23 +46,6 @@ def _record(**overrides):
     return record
 
 
-def test_build_rl_row_contains_image_audio_placeholders_and_media(tmp_path):
-    (tmp_path / "images").mkdir()
-    (tmp_path / "audios").mkdir()
-    (tmp_path / "images/sample.jpg").write_bytes(b"image")
-    (tmp_path / "audios/sample.wav").write_bytes(b"audio")
-
-    row, reason = avqa.build_rl_row(_record(), tmp_path, split="train", index=0)
-
-    assert reason is None
-    assert row["prompt"][0]["content"] == avqa.SYSTEM_PROMPT
-    assert row["prompt"][1]["content"].startswith("<image><audio>Which event is visible and audible?\nOptions:\n")
-    assert row["images"] == [{"image": str((tmp_path / "images/sample.jpg").resolve())}]
-    assert row["audios"] == [str((tmp_path / "audios/sample.wav").resolve())]
-    assert row["reward_model"]["ground_truth"] == "<answer>B</answer>"
-    assert json.loads(row["extra_info"]["options"])["B"] == "applause"
-
-
 def test_build_rl_row_rejects_missing_media_and_bad_solution(tmp_path):
     row, reason = avqa.build_rl_row(_record(), tmp_path, split="train", index=0)
     assert row is None
@@ -78,7 +60,7 @@ def test_build_rl_row_rejects_missing_media_and_bad_solution(tmp_path):
     assert reason == "invalid_solution"
 
 
-def test_convert_split_writes_verl_parquet(tmp_path):
+def test_convert_split_writes_avqa_parquet_without_dictionary_encoding(tmp_path):
     split_dir = tmp_path / "train"
     (split_dir / "images").mkdir(parents=True)
     (split_dir / "audios").mkdir()
@@ -89,12 +71,18 @@ def test_convert_split_writes_verl_parquet(tmp_path):
 
     output = tmp_path / "out/train.parquet"
     stats = avqa.convert_split(source, output, split="train")
-    frame = pd.read_parquet(output)
+    row = pq.read_table(output).to_pylist()[0]
 
     assert stats["kept"] == 1
     assert stats["dropped"] == {}
-    assert frame.loc[0, "data_source"] == avqa.DATA_SOURCE
-    assert frame.loc[0, "ability"] == avqa.ABILITY
+    assert row["data_source"] == avqa.DATA_SOURCE
+    assert row["ability"] == avqa.ABILITY
+    assert row["prompt"][0]["content"] == avqa.SYSTEM_PROMPT
+    assert row["prompt"][1]["content"].startswith("<image><audio>Which event is visible and audible?\nOptions:\n")
+    assert row["images"] == [{"image": str((split_dir / "images/sample.jpg").resolve())}]
+    assert row["audios"] == [str((split_dir / "audios/sample.wav").resolve())]
+    assert row["reward_model"]["ground_truth"] == "<answer>B</answer>"
+    assert json.loads(row["extra_info"]["options"])["B"] == "applause"
 
     parquet_file = pq.ParquetFile(output)
     for column_index in range(parquet_file.metadata.num_columns):
