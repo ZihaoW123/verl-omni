@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Qwen3-Omni Thinker GSPO full-parameter AVQA training with the omni V1 trainer.
 # Modalities: text + image + audio -> text.
-# Hardware: Atlas 800T A3 (16x NPUs).
+# Hardware: Atlas 800T A3 (16 × Ascend 910C 64GB).
 set -x
 
 export CPATH=/usr/include${CPATH:+:$CPATH}

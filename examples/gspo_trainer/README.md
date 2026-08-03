@@ -13,7 +13,8 @@ Both **GPU** and **NPU** training platforms are supported:
 - `examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_lora_v1.sh`
   — **GPU**, **LoRA (r=32)** on a single node with **4 × H800 80GB**.
 - `examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu.sh`
-  — **NPU**, **full-parameter** on a single **Atlas 800T A3** node with **16 NPUs**.
+  — **NPU**, **full-parameter** on a single **Atlas 800T A3** node with
+  **16 × Ascend 910C 64GB**.
 - [`run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh`](qwen3_omni/run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh)
   — **NPU**, **full-parameter V1** for text + image + audio AVQA training.
 
@@ -51,11 +52,11 @@ is left unchanged for backward compatibility.
 The launchers colocate the FSDP actor and the `vllm-omni` rollout on the same
 devices. `run_qwen3_omni_thinker_gspo_lora_v1.sh` targets a single node with
 **4 × H800 80GB**; `run_qwen3_omni_thinker_gspo_npu.sh` targets a single
-**Atlas 800T A3** node with **16 NPUs** (full-parameter FSDP actor, rollout
-TP=2). The AVQA NPU launcher dynamically generates a thinker-only deploy config
-for each rollout replica from that replica's visible devices, avoiding
-cross-replica device-rank collisions. Multi-node is not yet validated on either
-platform.
+**Atlas 800T A3** node with **16 × Ascend 910C 64GB** (full-parameter FSDP
+actor, rollout TP=2). The AVQA NPU launcher dynamically generates a thinker-only
+deploy config for each rollout replica from that replica's visible devices,
+avoiding cross-replica device-rank collisions. Multi-node is not yet validated
+on either platform.
 
 > **Deprecated:** `run_qwen3_omni_thinker_gspo_lora.sh` retains the old
 > `verl.trainer.main_ppo` and model monkey-patch path for backward compatibility.
@@ -92,7 +93,7 @@ Launch from the repository root — pick the flavor that matches your hardware:
 # GPU, LoRA (r=32), 4 × H800 — V1 trainer (recommended)
 bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_lora_v1.sh
 
-# NPU, full-parameter, 16 × Atlas 800T A3
+# NPU, full-parameter, Atlas 800T A3 (16 × Ascend 910C 64GB)
 bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu.sh
 ```
 
