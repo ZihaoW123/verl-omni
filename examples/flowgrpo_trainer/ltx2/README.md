@@ -24,11 +24,13 @@ Use `dataset/vid_prompt/train.txt` and `test.txt`:
 ```bash
 python3 examples/flowgrpo_trainer/ltx2/prepare_data.py \
   --input_dir ./dataset/vid_prompt \
-  --output_dir "$WORKSPACE/data/vid_prompt/verl_omni"
+  --output_dir "$WORKSPACE/data/vid_prompt/verl_omni" \
+  --val_size 128
 ```
 
-Both `--train_size` and `--val_size` default to `-1`, so all prompts in each
-split are converted unless an explicit non-negative limit is provided.
+The documented recipe uses all training prompts and 128 validation prompts.
+The script defaults both `--train_size` and `--val_size` to `-1`, which converts
+all prompts when a limit is not provided.
 
 ## Install reward dependencies
 
