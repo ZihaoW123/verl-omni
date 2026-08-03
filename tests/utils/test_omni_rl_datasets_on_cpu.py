@@ -16,8 +16,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from datasets.utils._dill import dumps
-from dill import loads
+from dill import dumps, loads
 
 pytest.importorskip("cachetools")
 pytest.importorskip("vllm")
