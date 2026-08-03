@@ -9,6 +9,16 @@ that checkpoint architecture key.
 
 ## Prepare data
 
+The prompt corpus is derived from
+[VidProM](https://huggingface.co/datasets/WenhaoWang/VidProM), a CC-BY-NC 4.0
+dataset containing 1.67 million unique text-to-video prompts from real users.
+This recipe uses the 50,000-prompt subset from
+[`video_prompts.txt`](https://github.com/XueZeyue/DanceGRPO/blob/main/assets/video_prompts.txt)
+with the following split:
+
+- `train.txt`: 48,976 prompts
+- `test.txt`: 1,024 prompts
+
 Use `dataset/vid_prompt/train.txt` and `test.txt`:
 
 ```bash
