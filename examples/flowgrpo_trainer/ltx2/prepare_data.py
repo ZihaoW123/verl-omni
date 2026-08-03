@@ -62,7 +62,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input_dir", type=Path, required=True)
     parser.add_argument("--output_dir", type=Path, required=True)
-    parser.add_argument("--train_size", type=int, default=1024)
+    parser.add_argument("--train_size", type=int, default=-1)
     parser.add_argument("--val_size", type=int, default=-1)
     args = parser.parse_args()
 
