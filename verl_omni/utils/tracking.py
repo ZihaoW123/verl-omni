@@ -134,16 +134,18 @@ def _export_video(
 
 
 def wrap_val_samples_for_wandb(samples, fps=24):
-    """Wrap validation samples for ``wandb`` image or audio-video logging.
+    """Wrap validation samples and prepare top-level ``wandb`` video media.
 
     Video outputs ``[T, C, H, W]`` are encoded to a temp mp4 and passed to
     ``wandb.Video`` by path; optional tuple elements four and five carry audio and
-    its sample rate. Other outputs become ``wandb.Image``.
+    its sample rate. The table stores a stable media key because offline ``wandb``
+    tables do not reliably persist nested videos. Other outputs become ``wandb.Image``.
     """
     import wandb
 
     video_tmp_dir = None
     wrapped = []
+    media_to_log = {}
     for sample in samples:
         inp, out, score = sample[:3]
         audio = sample[3] if len(sample) > 3 else None
@@ -153,8 +155,21 @@ def wrap_val_samples_for_wandb(samples, fps=24):
                 video_tmp_dir = tempfile.mkdtemp(prefix="val_video_")
             video_path = os.path.join(video_tmp_dir, f"{len(wrapped)}.mp4")
             _export_video(out, video_path, fps=fps, audio=audio, audio_sample_rate=audio_sample_rate)
-            media = wandb.Video(video_path, format="mp4")
+            media_key = f"val/videos/sample_{len(wrapped) + 1}"
+            media_to_log[media_key] = wandb.Video(video_path, format="mp4")
+            media = media_key
         else:
             media = wandb.Image(out.float(), file_type="jpg")
         wrapped.append((inp, media, score))
-    return wrapped, video_tmp_dir
+    return wrapped, video_tmp_dir, media_to_log
+
+
+def log_wandb_media(media: dict[str, Any], step: int) -> None:
+    """Buffer top-level ``wandb`` media for the validation table log at ``step``."""
+    if not media:
+        return
+
+    import wandb
+
+    if wandb.run is not None:
+        wandb.log(media, step=step, commit=False)

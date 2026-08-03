@@ -51,17 +51,19 @@ def test_video_samples_become_wandb_video_with_a_real_mp4(monkeypatch):
                     path=path, kwargs=dict(kwargs), rgb=tuple(float(frame[..., c].mean()) for c in range(3))
                 )
             )
+            self.data_or_path = path
 
     monkeypatch.setattr(wandb, "Video", _FakeVideo)
 
     samples = [(f"prompt {i}", _warm_clip(), float(i)) for i in range(2)]
-    wrapped, video_tmp_dir = wrap_val_samples_for_wandb(samples, fps=8)
+    wrapped, video_tmp_dir, media_to_log = wrap_val_samples_for_wandb(samples, fps=8)
 
     try:
         assert len(wrapped) == 2
         assert len(captured) == 2
-        for (inp, media, score), c in zip(wrapped, captured, strict=True):
-            assert isinstance(media, _FakeVideo)
+        for index, ((inp, media_key, score), c) in enumerate(zip(wrapped, captured, strict=True), start=1):
+            assert media_key == f"val/videos/sample_{index}"
+            assert media_to_log[media_key].data_or_path == c.path
             assert c.path.endswith(".mp4") and c.kwargs.get("format") == "mp4"
             r, g, b = c.rgb
             assert r > g > b and r > 128 and b < 128, f"warm frame inverted: R={r:.1f} G={g:.1f} B={b:.1f}"
@@ -76,7 +78,8 @@ def test_image_samples_become_wandb_image_and_no_temp_dir(monkeypatch):
     monkeypatch.setattr(wandb, "Image", lambda data, *a, **k: SimpleNamespace(data=data))
 
     samples = [("prompt", torch.rand(3, 16, 16), 1.0)]
-    wrapped, video_tmp_dir = wrap_val_samples_for_wandb(samples)
+    wrapped, video_tmp_dir, media_to_log = wrap_val_samples_for_wandb(samples)
 
     assert video_tmp_dir is None
+    assert media_to_log == {}
     assert len(wrapped) == 1 and wrapped[0][0] == "prompt"

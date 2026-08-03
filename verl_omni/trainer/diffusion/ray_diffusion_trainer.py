@@ -71,8 +71,7 @@ from verl_omni.trainer.diffusion.rollout_correction import (
     compute_rollout_corr_metrics_from_batch,
     rollout_correction_enabled,
 )
-from verl_omni.utils.reward_score.reward_utils import video_tensor_to_pil_frames
-from verl_omni.utils.tracking import batch_items, wrap_val_samples_for_wandb
+from verl_omni.utils.tracking import _export_video, batch_items, log_wandb_media, wrap_val_samples_for_wandb
 from verl_omni.workers.utils.padding import embeds_padding_2_no_padding
 
 sys_logger = logging.getLogger(__name__)
@@ -278,13 +277,23 @@ class BaseRayDiffusionTrainer(ABC):
             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
 
     def _dump_generations(
-        self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path, max_samples=None, fps=24
+        self,
+        inputs,
+        outputs,
+        gts,
+        scores,
+        reward_extra_infos_dict,
+        dump_path,
+        max_samples=None,
+        fps=24,
+        audios=None,
+        audio_sample_rates=None,
     ):
         """Dump samples to disk as media files plus a JSONL index.
 
         ``outputs`` is a batch of images ``[N, C, H, W]`` (-> ``{i}.jpg``) or videos
         ``[N, T, C, H, W]`` (-> ``{i}.mp4`` at ``fps``). ``max_samples`` caps how many
-        are written (``None`` = all).
+        are written (``None`` = all). Optional generated audio is muxed into video files.
         """
         os.makedirs(dump_path, exist_ok=True)
 
@@ -297,12 +306,17 @@ class BaseRayDiffusionTrainer(ABC):
 
         output_paths = []
         if is_video:
-            from diffusers.utils import export_to_video
-
+            audios = batch_items(audios, n_full, "audio")
+            audio_sample_rates = batch_items(audio_sample_rates, n_full, "audio_sample_rate")
             for i in range(n):
-                frames = video_tensor_to_pil_frames(outputs[i])
                 video_path = os.path.join(visual_folder, f"{i}.mp4")
-                export_to_video(frames, video_path, fps=fps)
+                _export_video(
+                    outputs[i],
+                    video_path,
+                    fps=fps,
+                    audio=audios[i],
+                    audio_sample_rate=audio_sample_rates[i],
+                )
                 output_paths.append(video_path)
         else:
             images_pil = outputs[:n].cpu().float().permute(0, 2, 3, 1).numpy()
@@ -370,6 +384,10 @@ class BaseRayDiffusionTrainer(ABC):
                 dump_path=rollout_data_dir,
                 max_samples=self.config.trainer.get("rollout_data_max_samples", None),
                 fps=int(self.config.trainer.get("video_fps", 24)),
+                audios=batch.batch.get("audio", batch.non_tensor_batch.get("audio")),
+                audio_sample_rates=batch.non_tensor_batch.get(
+                    "audio_sample_rate", batch.batch.get("audio_sample_rate")
+                ),
             )
 
     def _maybe_log_val_generations(self, inputs, outputs, scores, audios=None, audio_sample_rates=None):
@@ -398,8 +416,9 @@ class BaseRayDiffusionTrainer(ABC):
 
         # Wrap retained media for wandb (after truncation, so videos are not all encoded)
         video_tmp_dir = None
+        wandb_media = {}
         if "wandb" in self.config.trainer.logger:
-            samples, video_tmp_dir = wrap_val_samples_for_wandb(
+            samples, video_tmp_dir, wandb_media = wrap_val_samples_for_wandb(
                 samples, fps=int(self.config.trainer.get("video_fps", 24))
             )
         else:
@@ -407,6 +426,7 @@ class BaseRayDiffusionTrainer(ABC):
 
         # Log to each configured logger
         try:
+            log_wandb_media(wandb_media, self.global_steps)
             self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
         finally:
             if video_tmp_dir is not None:
@@ -560,6 +580,8 @@ class BaseRayDiffusionTrainer(ABC):
                 dump_path=val_data_dir,
                 max_samples=self.config.trainer.get("validation_data_max_samples", None),
                 fps=int(self.config.trainer.get("video_fps", 24)),
+                audios=sample_audios,
+                audio_sample_rates=sample_audio_sample_rates,
             )
 
         for key_info, lst in reward_extra_infos_dict.items():

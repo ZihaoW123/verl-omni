@@ -99,7 +99,7 @@ def test_wandb_wrapper_forwards_audio_to_video_export(monkeypatch):
     monkeypatch.setattr(tracking, "_export_video", fake_export)
     clip = torch.zeros(5, 3, 8, 10)
     audio = torch.zeros(1, 800)
-    wrapped, temp_dir = tracking.wrap_val_samples_for_wandb(
+    wrapped, temp_dir, media_to_log = tracking.wrap_val_samples_for_wandb(
         [("prompt", clip, 0.5, audio, 48_000)],
         fps=24,
     )
@@ -107,9 +107,24 @@ def test_wandb_wrapper_forwards_audio_to_video_export(monkeypatch):
     try:
         assert len(captured) == 1
         assert captured[0][2] == {"fps": 24, "audio": audio, "audio_sample_rate": 48_000}
-        assert wrapped[0][0] == "prompt" and wrapped[0][2] == 0.5
+        assert wrapped == [("prompt", "val/videos/sample_1", 0.5)]
+        assert media_to_log == {"val/videos/sample_1": (captured[0][1], {"format": "mp4"})}
     finally:
         Path(temp_dir).rmdir()
+
+
+def test_wandb_media_is_logged_as_a_top_level_payload(monkeypatch):
+    tracking = _load_tracking_module(monkeypatch)
+    calls = []
+    wandb = types.ModuleType("wandb")
+    wandb.run = object()
+    wandb.log = lambda payload, step, commit: calls.append((payload, step, commit))
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+
+    media = {"val/videos/sample_1": object()}
+    tracking.log_wandb_media(media, step=7)
+
+    assert calls == [(media, 7, False)]
 
 
 def test_real_audio_video_is_decodable_and_accepted_by_wandb(monkeypatch, tmp_path):

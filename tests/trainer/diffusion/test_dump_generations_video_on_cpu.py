@@ -22,6 +22,7 @@ for the trainer.
 
 import json
 import os
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -34,7 +35,7 @@ pytest.importorskip("diffusers")
 from verl_omni.trainer.diffusion.ray_diffusion_trainer import BaseRayDiffusionTrainer
 
 
-def _dump(dump_path, outputs, *, max_samples=None, global_steps=0):
+def _dump(dump_path, outputs, *, max_samples=None, global_steps=0, audios=None, audio_sample_rates=None):
     """Invoke the unbound ``_dump_generations`` with a minimal stub ``self``."""
     n = outputs.shape[0]
     stub = SimpleNamespace(global_steps=global_steps)
@@ -43,6 +44,9 @@ def _dump(dump_path, outputs, *, max_samples=None, global_steps=0):
     scores = [float(i) for i in range(n)]
     # An extra whose length matches the full batch must be sliced alongside it.
     reward_extra_infos_dict = {"reward": [float(i) for i in range(n)]}
+    kwargs = {}
+    if audios is not None:
+        kwargs = {"audios": audios, "audio_sample_rates": audio_sample_rates}
     BaseRayDiffusionTrainer._dump_generations(
         stub,
         inputs,
@@ -53,6 +57,7 @@ def _dump(dump_path, outputs, *, max_samples=None, global_steps=0):
         str(dump_path),
         max_samples=max_samples,
         fps=8,
+        **kwargs,
     )
 
 
@@ -76,6 +81,17 @@ class TestDumpGenerations:
         assert all(row["step"] == 0 for row in rows)
         # Full-length extras are carried through, sliced to the dumped count.
         assert [row["reward"] for row in rows] == [0.0, 1.0]
+
+    def test_video_batch_muxes_generated_audio(self, tmp_path):
+        from imageio_ffmpeg import get_ffmpeg_exe
+
+        outputs = torch.rand(1, 8, 3, 16, 16)
+        audios = torch.sin(torch.linspace(0, 100, 48_000)).reshape(1, 1, -1)
+        _dump(tmp_path, outputs, audios=audios, audio_sample_rates=[48_000])
+
+        path = os.path.join(str(tmp_path), "0", "0.mp4")
+        probe = subprocess.run([get_ffmpeg_exe(), "-i", path], capture_output=True, text=True)
+        assert "Video:" in probe.stderr and "Audio: aac" in probe.stderr
 
     def test_video_colors_not_inverted(self, tmp_path):
         """``export_to_video`` rescales NumPy input by 255 even when it is already
