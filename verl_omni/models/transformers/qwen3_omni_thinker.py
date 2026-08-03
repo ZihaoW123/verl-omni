@@ -136,11 +136,8 @@ def patch_hf_processor_for_qwen3_omni() -> None:
             processor.spatial_merge_size = config.thinker_config.vision_config.spatial_merge_size
             processor.config.vision_start_token_id = config.talker_config.vision_start_token_id
             model_class = Qwen3OmniMoeThinkerForConditionalGeneration
-            # upstream get_rope_index returns float32. cast to int64 so agent_loop's
-            # cat(text_position_ids=int64, vision_position_ids) yields int64 and FSDP
-            # root-input casting (floating dtypes only) leaves positions exact -
-            # avoids BF16 large-int rounding (e.g. 2879 -> 2880) that breaks SDPA
-            # packed-sequence detection under use_remove_padding.
+
+            # cast to int64 to avoid BF16 large-int rounding in fsdp.
             _ori_get_rope_index = types.MethodType(model_class.get_rope_index, processor)
 
             def _get_rope_index_long(*args, **kwargs):

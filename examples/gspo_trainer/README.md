@@ -55,8 +55,7 @@ devices. `run_qwen3_omni_thinker_gspo_lora_v1.sh` targets a single node with
 **Atlas 800T A3** node with **16 × Ascend 910C 64GB** (full-parameter FSDP
 actor, rollout TP=2). The AVQA NPU launcher dynamically generates a thinker-only
 deploy config for each rollout replica from that replica's visible devices,
-avoiding cross-replica device-rank collisions. Multi-node is not yet validated
-on either platform.
+avoiding cross-replica device-rank collisions.
 
 > **Deprecated:** `run_qwen3_omni_thinker_gspo_lora.sh` retains the old
 > `verl.trainer.main_ppo` and model monkey-patch path for backward compatibility.
@@ -299,9 +298,9 @@ examples/gspo_trainer/
 │   ├── run_qwen3_omni_thinker_gspo_npu.sh            ← launch script (NPU, full-parameter)
 │   ├── run_qwen3_omni_thinker_gspo_npu_avqa_v1.sh    ← V1 launch script (NPU, AVQA)
 │   ├── config/
-│   │   └── qwen3_omni_thinker_gspo.yaml              ← main_ppo recipe config
-│   ├── qwen3_omni_thinker_only.yaml                  ← GPU stage config
-│   └── qwen3_omni_thinker_only_npu.yaml              ← NPU stage config
+│   │   └── qwen3_omni_thinker_gspo.yaml              ← old recipe config (deprecated path only)
+│   ├── qwen3_omni_thinker_only.yaml                  ← old vllm-omni stage config (deprecated path only)
+│   └── qwen3_omni_thinker_only_npu.yaml              ← old vllm-omni stage config (deprecated path only)
 ├── data_process/
 │   ├── mmk12.py                                      ← MMK12 → verl RL parquet converter
 │   └── avqa.py                                       ← AVQA → verl RL parquet converter
