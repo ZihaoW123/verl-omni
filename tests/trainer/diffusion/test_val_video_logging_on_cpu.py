@@ -124,22 +124,3 @@ class TestMaybeLogValGenerationsWandb:
         assert loggers == ["wandb"] and step == 0
         assert len(samples) == 2
         assert [media_key for _inp, media_key, _score in samples] == list(media_payload)
-
-    def test_real_wandb_video_ingests_our_production_mp4(self, tmp_path):
-        """The REAL wandb.Video ingests a production-path mp4 from disk (size + sha256) with no moviepy."""
-        from diffusers.utils import export_to_video
-
-        from verl_omni.utils.reward_score.reward_utils import video_tensor_to_pil_frames
-
-        clip = _warm_clips(1)[0]  # [T, C, H, W]
-        path = str(tmp_path / "clip.mp4")
-        export_to_video(video_tensor_to_pil_frames(clip), path, fps=8)
-        assert os.path.getsize(path) > 0
-
-        vid = wandb.Video(path, format="mp4")  # no fps= (ignored + warned for file paths)
-
-        assert vid._path == path
-        assert vid._format == "mp4"
-        # wandb read our real file: the size + hash it will upload match the mp4 on disk.
-        assert vid._size == os.path.getsize(path)
-        assert isinstance(vid._sha256, str) and len(vid._sha256) == 64

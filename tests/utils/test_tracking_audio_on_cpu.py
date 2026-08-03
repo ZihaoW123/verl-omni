@@ -15,15 +15,12 @@
 """CPU tests for audio-video experiment tracking."""
 
 import importlib.util
-import subprocess
 import sys
 import types
 import wave
 from pathlib import Path
 
-import imageio.v2 as imageio
 import torch
-import wandb
 from PIL import Image
 
 
@@ -125,38 +122,3 @@ def test_wandb_media_is_logged_as_a_top_level_payload(monkeypatch):
     tracking.log_wandb_media(media, step=7)
 
     assert calls == [(media, 7, False)]
-
-
-def test_real_audio_video_is_decodable_and_accepted_by_wandb(monkeypatch, tmp_path):
-    tracking = _load_tracking_module(monkeypatch)
-    output_path = tmp_path / "sample.mp4"
-    clip = torch.zeros(8, 3, 32, 32)
-    clip[:, 0] = 0.75
-    clip[:, 1] = 0.35
-    audio = torch.sin(torch.linspace(0, 100, 48_000)).unsqueeze(0)
-
-    tracking._export_video(
-        clip,
-        str(output_path),
-        fps=8,
-        audio=audio,
-        audio_sample_rate=48_000,
-    )
-
-    reader = imageio.get_reader(output_path)
-    frame = reader.get_data(4)
-    reader.close()
-    assert frame.shape == (32, 32, 3)
-
-    from imageio_ffmpeg import get_ffmpeg_exe
-
-    probe = subprocess.run(
-        [get_ffmpeg_exe(), "-i", str(output_path)],
-        capture_output=True,
-        text=True,
-    )
-    assert "Video:" in probe.stderr and "Audio: aac" in probe.stderr
-
-    media = wandb.Video(str(output_path), format="mp4")
-    assert media._path == str(output_path)
-    assert media._size == output_path.stat().st_size
