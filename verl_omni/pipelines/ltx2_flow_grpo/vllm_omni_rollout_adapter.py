@@ -47,6 +47,7 @@ class LTX23PipelineWithLogProb(LTX23Pipeline):
 
     def __init__(self, *, od_config: OmniDiffusionConfig, prefix: str = ""):
         super().__init__(od_config=od_config, prefix=prefix)
+        self.set_progress_bar_config(disable=True)
         self.scheduler = FlowMatchSDEDiscreteScheduler.from_pretrained(
             od_config.model,
             subfolder="scheduler",

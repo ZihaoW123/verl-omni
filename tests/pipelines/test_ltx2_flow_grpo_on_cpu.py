@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import torch
 from tensordict import TensorDict
+from vllm_omni.diffusion.models.ltx2.pipeline_ltx2_3 import LTX23Pipeline
 
 from verl_omni.pipelines.ltx2_flow_grpo.agent_loop import _messages_to_text
 from verl_omni.pipelines.ltx2_flow_grpo.common import (
@@ -26,6 +27,7 @@ from verl_omni.pipelines.ltx2_flow_grpo.common import (
 from verl_omni.pipelines.ltx2_flow_grpo.diffusers_training_adapter import LTX23FlowGRPO
 from verl_omni.pipelines.ltx2_flow_grpo.vllm_omni_rollout_adapter import LTX23PipelineWithLogProb
 from verl_omni.pipelines.model_base import DiffusionModelBase, VllmOmniPipelineBase
+from verl_omni.pipelines.schedulers import FlowMatchSDEDiscreteScheduler
 from verl_omni.workers.rollout.vllm_rollout.vllm_omni_async_server import vLLMOmniHttpServer
 
 
@@ -39,6 +41,21 @@ def test_ltx2_reference_lora_targets_are_complete() -> None:
 def test_ltx2_checkpoint_architecture_registers_both_adapters() -> None:
     assert DiffusionModelBase.get_class_by_name("LTX2Pipeline", "flow_grpo") is LTX23FlowGRPO
     assert VllmOmniPipelineBase.get_class("LTX2Pipeline", "flow_grpo") is LTX23PipelineWithLogProb
+
+
+def test_ltx2_rollout_disables_denoising_progress_bar(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(LTX23Pipeline, "__init__", lambda self, **kwargs: None)
+    monkeypatch.setattr(FlowMatchSDEDiscreteScheduler, "from_pretrained", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        LTX23PipelineWithLogProb,
+        "set_progress_bar_config",
+        lambda self, **kwargs: calls.append(kwargs),
+    )
+
+    LTX23PipelineWithLogProb(od_config=SimpleNamespace(model="model"))
+
+    assert calls == [{"disable": True}]
 
 
 def test_ltx2_x0_cfg_and_resolution_dependent_shift() -> None:
