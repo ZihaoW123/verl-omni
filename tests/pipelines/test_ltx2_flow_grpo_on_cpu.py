@@ -118,7 +118,7 @@ def test_vllm_omni_server_forwards_audio_for_rewards() -> None:
     server._ar_mode = False
     server.global_steps = 7
     final_result = SimpleNamespace(
-        images=[torch.zeros(1, 3, 3, 8, 8)],
+        images=[torch.zeros(3, 3, 8, 8)],
         custom_output={"all_latents": torch.ones(1, 2, 4, 8)},
         multimodal_output={
             "audio": torch.ones(1, 1, 32),

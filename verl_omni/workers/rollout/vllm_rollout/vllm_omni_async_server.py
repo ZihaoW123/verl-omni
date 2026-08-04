@@ -572,12 +572,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             diffusion_output = torch.from_numpy(diffusion_output).float()
         else:
             diffusion_output = self._to_tensor(diffusion_output).float() / 255.0
-        if diffusion_output.ndim == 5:
-            if diffusion_output.shape[0] != 1:
-                raise ValueError(
-                    f"Expected one video per diffusion request, got shape {tuple(diffusion_output.shape)}."
-                )
-            diffusion_output = diffusion_output[0]
 
         # Extract extra data from custom_output (populated by DiffusionEngine)
         custom_output = final_res.custom_output or {}

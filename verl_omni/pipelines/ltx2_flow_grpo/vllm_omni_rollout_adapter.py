@@ -389,6 +389,11 @@ class LTX23PipelineWithLogProb(LTX23Pipeline):
         if len(outputs) != 1:
             raise RuntimeError(f"Single-request LTX rollout returned {len(outputs)} outputs.")
         output = outputs[0]
+        video, audio = output.output
+        if isinstance(video, torch.Tensor) and video.ndim == 5:
+            if video.shape[0] != 1:
+                raise ValueError(f"Expected one video per diffusion request, got shape {tuple(video.shape)}.")
+            output.output = (video[0], audio)
         prompt_context = self._flow_grpo_prompt_context
         if prompt_context is None:
             raise RuntimeError("LTX-2.3 rollout did not prepare prompt connector outputs.")
