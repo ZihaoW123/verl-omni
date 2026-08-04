@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ci-e2e-diffusion GPU smoke tests (4-GPU): end-to-end diffusion training paths.
+# ci-e2e-diffusion GPU smoke tests (4-GPU): FlowGRPO, online DPO, DiffusionNFT,
+# LTX-2.3 FlowGRPO, and FlowGRPO v1 separate_async end-to-end training paths.
 
 set -euo pipefail
 
@@ -26,5 +27,9 @@ run_test 2 "DiffusionNFT trainer e2e" \
 run_test 3 "LTX-2.3 FlowGRPO trainer e2e" \
     env CUDA_VISIBLE_DEVICES="${CUDA_DEVICE_LIST}" NUM_GPUS="${NUM_GPUS}" \
     bash tests/special_e2e/run_flowgrpo_ltx2_3.sh
+
+run_test 4 "FlowGRPO v1 separate_async trainer e2e" \
+    env CUDA_VISIBLE_DEVICES="${CUDA_DEVICE_LIST}" NUM_GPUS="${NUM_GPUS}" \
+    bash tests/special_e2e/run_flowgrpo_qwen_image_v1_separate_async.sh
 
 gpu_smoke_summary

@@ -280,6 +280,7 @@ actor_rollout_ref:
     path: ~/models/Qwen/Qwen-Image
     algorithm: flow_grpo
     tokenizer_path: null
+    extra_tokenizers: null
     use_shm: false
     trust_remote_code: false
     custom_chat_template: null
@@ -519,6 +520,7 @@ trainer:
     separate_async:
       num_warmup_batches: 1
       parameter_sync_step: 4
+      sync_compatible: false
     sampler:
       max_off_policy_threshold: 8
       max_off_policy_strategy: drop

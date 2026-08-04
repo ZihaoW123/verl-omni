@@ -17,8 +17,9 @@
 from typing import Any
 
 from verl.experimental.agent_loop.agent_loop import register
-from verl.utils.tokenizer import normalize_token_ids
 from verl.utils.ray_utils import get_event_loop
+from verl.utils.tokenizer import normalize_token_ids
+
 from verl_omni.agent_loop.single_turn_agent_loop import DiffusionSingleTurnAgentLoop
 
 
@@ -75,6 +76,7 @@ class LTX2DiffusionSingleTurnAgentLoop(DiffusionSingleTurnAgentLoop):
         self.mm_processor_kwargs = self.data_config.get("mm_processor_kwargs", {})
         self.system_prompt = []
         self.loop = get_event_loop()
+
     async def apply_chat_template(
         self,
         messages: list[dict],
