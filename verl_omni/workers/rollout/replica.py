@@ -13,18 +13,8 @@
 # limitations under the License.
 from typing import Any, Optional
 
-import torch
 from pydantic import BaseModel, ConfigDict
 from verl.workers.rollout.replica import RolloutReplicaRegistry
-
-
-def unbatch_single_request_video(output: torch.Tensor) -> torch.Tensor:
-    """Convert a single-request NTCHW video to the rollout TCHW contract."""
-    if output.ndim != 5:
-        return output
-    if output.shape[0] != 1:
-        raise ValueError(f"Expected one video per diffusion request, got shape {tuple(output.shape)}.")
-    return output[0]
 
 
 class DiffusionOutput(BaseModel):

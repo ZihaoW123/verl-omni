@@ -118,7 +118,7 @@ def test_vllm_omni_server_forwards_audio_for_rewards() -> None:
     server._ar_mode = False
     server.global_steps = 7
     final_result = SimpleNamespace(
-        images=[torch.zeros(3, 3, 8, 8)],
+        images=[torch.zeros(1, 3, 3, 8, 8)],
         custom_output={"all_latents": torch.ones(1, 2, 4, 8)},
         multimodal_output={
             "audio": torch.ones(1, 1, 32),
@@ -128,6 +128,7 @@ def test_vllm_omni_server_forwards_audio_for_rewards() -> None:
     )
 
     output = server._process_output(final_result, params=None, sampling_params={"logprobs": False})
+    assert output.diffusion_output.shape == (3, 3, 8, 8)
     assert output.extra_fields["audio"].shape == (1, 32)
     assert output.extra_fields["audio_sample_rate"] == 48_000
     assert output.extra_fields["global_steps"] == 7

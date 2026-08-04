@@ -51,7 +51,7 @@ from vllm_omni.outputs import OmniRequestOutput
 
 from verl_omni.pipelines.model_base import OmniRolloutPipelineBase, VllmOmniPipelineBase
 from verl_omni.workers.config import DiffusionModelConfig, DiffusionRolloutConfig, OmniModelConfig
-from verl_omni.workers.rollout.replica import DiffusionOutput, unbatch_single_request_video
+from verl_omni.workers.rollout.replica import DiffusionOutput
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
@@ -572,13 +572,18 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             diffusion_output = torch.from_numpy(diffusion_output).float()
         else:
             diffusion_output = self._to_tensor(diffusion_output).float() / 255.0
-        diffusion_output = unbatch_single_request_video(diffusion_output)
+        if diffusion_output.ndim == 5:
+            if diffusion_output.shape[0] != 1:
+                raise ValueError(
+                    f"Expected one video per diffusion request, got shape {tuple(diffusion_output.shape)}."
+                )
+            diffusion_output = diffusion_output[0]
 
         # Extract extra data from custom_output (populated by DiffusionEngine)
-        mm_output = final_res.custom_output or {}
+        custom_output = final_res.custom_output or {}
 
         if sampling_params.get("logprobs", False):
-            all_log_probs = mm_output.get("all_log_probs")
+            all_log_probs = custom_output.get("all_log_probs")
             log_probs = all_log_probs[0] if all_log_probs is not None else None
         else:
             log_probs = None
@@ -594,7 +599,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 return value[0] if value else None
             return value
 
-        extra_fields = {k: _maybe_unbatch(v) for k, v in mm_output.items() if k != "all_log_probs"}
+        extra_fields = {k: _maybe_unbatch(v) for k, v in custom_output.items() if k != "all_log_probs"}
         multimodal_output = final_res.multimodal_output or {}
         if isinstance(multimodal_output, dict):
             for key, value in multimodal_output.items():
