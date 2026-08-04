@@ -169,7 +169,7 @@ The experiment settings and throughputs are shown in the table below.
 <div align="center">
 <img width="600" alt="2p_comparison" src="https://github.com/user-attachments/assets/1094beaf-fed9-4661-8a6a-1c3983150648" />
 <br>
-qwen_image_ocr_lora: corresponding with the script `examples/flowgrpo_trainer/qwen_image/run_qwen_image_ocr_lora.sh`;
+qwen_image_ocr_lora: corresponding with the script `examples/flowgrpo_trainer/qwen_image/run_qwen_image_ocr_lora.sh`; 
 <br>
 qwen_image_ocr_lora_async_reward: corresponding with the script `examples/flowgrpo_trainer/qwen_image/run_qwen_image_ocr_lora_async_reward.sh`.
 </div>
