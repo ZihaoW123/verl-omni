@@ -33,7 +33,7 @@ python3 -m verl_omni.trainer.main_omni \
     data.filter_overlong_prompts_workers=64 \
     data.truncation=error \
     data.custom_cls.path=pkg://verl_omni.utils.dataset.omni_rl_datasets \
-    data.custom_cls.name=OmniRLHFDataset \
+    data.custom_cls.name=QwenOmniRLHFDataset \
     ++data.mm_processor_kwargs.sampling_rate=16000 \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \

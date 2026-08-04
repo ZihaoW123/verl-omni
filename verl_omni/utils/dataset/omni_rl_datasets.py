@@ -21,7 +21,7 @@ from omegaconf import DictConfig
 from verl.utils.dataset.rl_dataset import RLHFDataset
 
 
-class OmniRLHFDataset(RLHFDataset):
+class QwenOmniRLHFDataset(RLHFDataset):
     """Adapt Qwen's multimodal media loader to verl's RL dataset interface.
 
     verl turns parquet media columns into structured messages. Qwen's
@@ -36,8 +36,6 @@ class OmniRLHFDataset(RLHFDataset):
         image_patch_size: int,
         config: DictConfig | dict | None,
     ) -> tuple[list[Any] | None, list[Any] | None, list[Any] | None]:
-        del cls, image_patch_size, config
-
         from qwen_omni_utils import process_mm_info
 
         # Qwen returns (audios, images, videos); verl expects

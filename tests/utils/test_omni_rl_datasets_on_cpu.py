@@ -24,13 +24,13 @@ pytest.importorskip("vllm")
 from verl.utils.dataset.rl_dataset import RLHFDataset
 from verl.utils.import_utils import load_extern_object
 
-from verl_omni.utils.dataset.omni_rl_datasets import OmniRLHFDataset
+from verl_omni.utils.dataset.omni_rl_datasets import QwenOmniRLHFDataset
 
 
 def test_package_loaded_dataset_preserves_base_class_after_serialization():
     dataset_cls = load_extern_object(
         "pkg://verl_omni.utils.dataset.omni_rl_datasets",
-        "OmniRLHFDataset",
+        "QwenOmniRLHFDataset",
     )
     dataset = dataset_cls.__new__(dataset_cls)
     dataset.serialize_dataset = False
@@ -54,7 +54,7 @@ def test_process_multi_modal_info_uses_qwen_omni_utils_and_reorders_outputs(monk
     monkeypatch.setitem(sys.modules, "qwen_omni_utils", SimpleNamespace(process_mm_info=fake_process_mm_info))
     messages = [{"role": "user", "content": [{"type": "audio", "audio": "/data/sample.wav"}]}]
 
-    result = OmniRLHFDataset._process_multi_modal_info(messages, image_patch_size=14, config={})
+    result = QwenOmniRLHFDataset._process_multi_modal_info(messages, image_patch_size=14, config={})
 
     assert result == (images, videos, audios)
     assert calls == [(messages, False)]

@@ -229,7 +229,7 @@ labels, and media existence and prints kept/dropped counts for each split.
 
 Image and audio paths are decoded by Qwen's `qwen_omni_utils.process_mm_info`
 through
-[`OmniRLHFDataset`](../../verl_omni/utils/dataset/omni_rl_datasets.py). Install
+[`QwenOmniRLHFDataset`](../../verl_omni/utils/dataset/omni_rl_datasets.py). Install
 the official media loader without changing the NPU engine stack with
 `pip install -e ".[audio]"`, and ensure `ffmpeg` is available on every Ray
 worker.

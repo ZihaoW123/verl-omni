@@ -21,7 +21,7 @@ def test_avqa_npu_launcher_wires_v1_multimodal_training():
 
     required_settings = (
         "python3 -m verl_omni.trainer.main_omni",
-        "data.custom_cls.name=OmniRLHFDataset",
+        "data.custom_cls.name=QwenOmniRLHFDataset",
         "++data.mm_processor_kwargs.sampling_rate=16000",
         "actor_rollout_ref.actor.strategy=fsdp2",
         "actor_rollout_ref.rollout.name=vllm_omni",
