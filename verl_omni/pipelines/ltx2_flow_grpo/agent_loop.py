@@ -58,6 +58,7 @@ class LTX2DiffusionSingleTurnAgentLoop(DiffusionSingleTurnAgentLoop):
         processor,
         dataset_cls,
         data_config,
+        extra_tokenizer_map: dict[str, dict[str, Any]] | None = None,
         **kwargs,
     ) -> None:
         # LTX-2 uses its text encoder tokenizer as a raw-text tokenizer. Calling
@@ -74,6 +75,7 @@ class LTX2DiffusionSingleTurnAgentLoop(DiffusionSingleTurnAgentLoop):
         self.data_config = data_config.config
         self.apply_chat_template_kwargs = self.data_config.get("apply_chat_template_kwargs", {})
         self.mm_processor_kwargs = self.data_config.get("mm_processor_kwargs", {})
+        self.extra_tokenizer_map = extra_tokenizer_map or {}
         self.system_prompt = []
         self.loop = get_event_loop()
 
