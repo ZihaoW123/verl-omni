@@ -133,16 +133,19 @@ def _export_video(
         audio_path.unlink(missing_ok=True)
 
 
-def wrap_val_samples_for_wandb(samples, fps=24):
+def wrap_val_samples_for_wandb(samples, fps=24, output_dir=None):
     """Wrap validation samples and prepare top-level ``wandb`` video media.
 
-    Video outputs ``[T, C, H, W]`` are encoded to a temp mp4 and passed to
-    ``wandb.Video`` by path; optional tuple elements four and five carry audio and
-    its sample rate. The table stores a stable media key because offline ``wandb``
-    tables do not reliably persist nested videos. Other outputs become ``wandb.Image``.
+    Video outputs ``[T, C, H, W]`` are encoded to mp4 and passed to
+    ``wandb.Video`` by path. Provide ``output_dir`` to keep the media available
+    for asynchronous upload; otherwise a temp dir is returned for cleanup.
+    Optional tuple elements four and five carry audio and its sample rate. The
+    table stores a stable media key because offline ``wandb`` tables do not
+    reliably persist nested videos. Other outputs become ``wandb.Image``.
     """
     import wandb
 
+    video_dir = output_dir
     video_tmp_dir = None
     wrapped = []
     media_to_log = {}
@@ -151,9 +154,12 @@ def wrap_val_samples_for_wandb(samples, fps=24):
         audio = sample[3] if len(sample) > 3 else None
         audio_sample_rate = sample[4] if len(sample) > 4 else None
         if hasattr(out, "ndim") and out.ndim == 4:
-            if video_tmp_dir is None:
+            if video_dir is None:
                 video_tmp_dir = tempfile.mkdtemp(prefix="val_video_")
-            video_path = os.path.join(video_tmp_dir, f"{len(wrapped)}.mp4")
+                video_dir = video_tmp_dir
+            else:
+                os.makedirs(video_dir, exist_ok=True)
+            video_path = os.path.join(video_dir, f"{len(wrapped)}.mp4")
             _export_video(out, video_path, fps=fps, audio=audio, audio_sample_rate=audio_sample_rate)
             media_key = f"val/videos/sample_{len(wrapped) + 1}"
             media_to_log[media_key] = wandb.Video(video_path, format="mp4")
