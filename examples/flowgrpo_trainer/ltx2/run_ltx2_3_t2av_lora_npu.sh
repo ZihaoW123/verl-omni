@@ -13,6 +13,7 @@ WORKSPACE=${WORKSPACE:-$HOME}
 MODEL_PATH=${MODEL_PATH:-dg845/LTX-2.3-Diffusers}
 DATA_DIR=${DATA_DIR:-$WORKSPACE/data/vid_prompt/verl_omni}
 CLAP_MODEL_PATH=${CLAP_MODEL_PATH:-laion/larger_clap_general}
+IMAGEBIND_MODEL_PATH=${IMAGEBIND_MODEL_PATH:-.checkpoints/imagebind_huge.pth}
 NUM_GPUS=${NUM_GPUS:-16}
 ROLLOUT_TP=${ROLLOUT_TP:-4}
 REWARD_DEVICE=${REWARD_DEVICE:-npu}
@@ -125,7 +126,7 @@ python3 -m verl_omni.trainer.main_diffusion \
     '+reward.reward_functions.imagebind.name=compute_score' \
     '+reward.reward_functions.imagebind.weight=1.0' \
     "+reward.reward_functions.imagebind.device=$REWARD_DEVICE:1" \
-    '+reward.reward_functions.imagebind.model_name_or_path=.checkpoints/imagebind_huge.pth' \
+    "+reward.reward_functions.imagebind.model_name_or_path=$IMAGEBIND_MODEL_PATH" \
     '+reward.reward_functions.imagebind.mode=audio_video' \
     reward.aggregation=weighted_sum \
     trainer.logger='["console","tensorboard","wandb"]' \
