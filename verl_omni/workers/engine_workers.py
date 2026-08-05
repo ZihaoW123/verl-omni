@@ -65,6 +65,7 @@ from verl_omni.workers.config import (
     DiffusionModelConfig,
     OmniModelConfig,
 )
+from verl_omni.workers.rollout.vllm_rollout.ipc import make_update_zmq_handle
 from verl_omni.workers.utils.losses import diffusion_loss
 
 logger = logging.getLogger(__file__)
@@ -93,19 +94,6 @@ def _with_routing_replay_flag(enabled: bool):
         return wrapper
 
     return decorator
-
-
-def _make_update_zmq_handle(base_handle: str, global_steps: int | None) -> str:
-    """Return a per-update IPC handle so repeated LoRA syncs cannot collide."""
-    if not base_handle.startswith("ipc://"):
-        return base_handle
-
-    path = base_handle.removeprefix("ipc://")
-    if path.endswith(".sock"):
-        path = path[: -len(".sock")]
-    step = "none" if global_steps is None else str(global_steps)
-    unique_suffix = f"-step-{step}-pid-{os.getpid()}-{time.time_ns()}"
-    return f"ipc://{path}{unique_suffix}.sock"
 
 
 class TrainingWorker(Worker, DistProfilerExtension):
@@ -1020,7 +1008,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             # The _execute_method call only carries a small metadata dict (peft_config,
             # base_sync_done, use_shm) — tensor data goes through the ZMQ socket.
             sync_start = time.perf_counter()
-            zmq_handle = _make_update_zmq_handle(self.rollout.zmq_handle, global_steps)
+            zmq_handle = make_update_zmq_handle(self.rollout.zmq_handle, global_steps)
             future = await self.rollout._execute_method(
                 "update_weights_from_ipc",
                 non_block=True,
@@ -1028,7 +1016,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                     "peft_config": peft_config,
                     "base_sync_done": True,
                     "use_shm": self.rollout.use_shm,
-                    "zmq_handle": zmq_handle,
+                    "weight_update_id": global_steps,
                 },
             )
             bucket_size_mb = self.config.rollout.checkpoint_engine.update_weights_bucket_megabytes
