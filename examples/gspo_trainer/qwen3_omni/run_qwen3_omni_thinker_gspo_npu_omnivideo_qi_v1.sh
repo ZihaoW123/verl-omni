@@ -19,12 +19,19 @@ VAL_FILE=${VAL_FILE:-"$HOME/data/omnivideo_r1_qi/validation.parquet"}
 
 NUM_GPUS_ACTOR_ROLLOUT_REWARD=${NUM_GPUS_ACTOR_ROLLOUT_REWARD:-16}
 ROLLOUT_TP=${ROLLOUT_TP:-2}
+REWARD_TP=${REWARD_TP:-8}
+REWARD_NUM_WORKERS=${REWARD_NUM_WORKERS:-8}
+REWARD_GPU_MEMORY_UTILIZATION=${REWARD_GPU_MEMORY_UTILIZATION:-0.4}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-32}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16}
 ROLLOUT_N=${ROLLOUT_N:-8}
 
-: "${OMNIVIDEO_QI_JUDGE_URL:?Set OMNIVIDEO_QI_JUDGE_URL to an OpenAI-compatible Qwen3-VL endpoint}"
-export OMNIVIDEO_QI_JUDGE_MODEL=${OMNIVIDEO_QI_JUDGE_MODEL:-Qwen/Qwen3-VL-235B-A22B-Instruct}
+export OMNIVIDEO_QI_JUDGE_MODEL=${OMNIVIDEO_QI_JUDGE_MODEL:-Qwen/Qwen3-VL-30B-A3B-Instruct}
+if [[ -n "${OMNIVIDEO_QI_JUDGE_URL:-}" ]]; then
+    REWARD_MODEL_ENABLE=false
+else
+    REWARD_MODEL_ENABLE=true
+fi
 
 python3 -m verl_omni.trainer.main_omni \
     data.train_files="${TRAIN_FILE}" \
@@ -43,6 +50,7 @@ python3 -m verl_omni.trainer.main_omni \
     +data.use_audio_in_video=true \
     ++data.mm_processor_kwargs.fps=2.0 \
     ++data.mm_processor_kwargs.sampling_rate=16000 \
+    ++data.mm_processor_kwargs.use_audio_in_video=true \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.model.lora_rank=0 \
@@ -98,6 +106,24 @@ python3 -m verl_omni.trainer.main_omni \
     actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=false \
+    reward.num_workers=${REWARD_NUM_WORKERS} \
+    reward.reward_model.enable=${REWARD_MODEL_ENABLE} \
+    reward.reward_model.enable_resource_pool=false \
+    reward.reward_model.model_path="${OMNIVIDEO_QI_JUDGE_MODEL}" \
+    reward.reward_model.rollout.name=vllm \
+    reward.reward_model.rollout.tensor_model_parallel_size=${REWARD_TP} \
+    reward.reward_model.rollout.gpu_memory_utilization=${REWARD_GPU_MEMORY_UTILIZATION} \
+    reward.reward_model.rollout.free_cache_engine=true \
+    reward.reward_model.rollout.enforce_eager=false \
+    reward.reward_model.rollout.do_sample=false \
+    reward.reward_model.rollout.temperature=0 \
+    reward.reward_model.rollout.top_p=1.0 \
+    reward.reward_model.rollout.top_k=-1 \
+    reward.reward_model.rollout.prompt_length=32768 \
+    reward.reward_model.rollout.response_length=256 \
+    reward.reward_model.rollout.max_model_len=33024 \
+    reward.reward_model.rollout.max_num_seqs=32 \
+    reward.reward_model.rollout.limit_images=32 \
     reward.reward_manager.source=register \
     reward.reward_manager.name=naive \
     reward.custom_reward_function.path=verl_omni/utils/reward_score/omnivideo_qi.py \

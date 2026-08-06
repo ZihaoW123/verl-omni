@@ -36,7 +36,7 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_JUDGE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+DEFAULT_JUDGE_MODEL = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 _PAIR_SOURCE = (
     r"<time>(?P<start>\d+\.\d)-(?P<end>\d+\.\d)</time>"
     r"<caption>(?P<caption>.*?)</caption>"

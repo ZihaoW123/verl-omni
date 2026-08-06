@@ -265,6 +265,12 @@ The QI recipe trains Qwen3-Omni on
 with video, its audio stream, and question text as input. It implements only the
 paper's first-stage reward:
 
+This recipe is implemented and tested against verl commit
+[`8a694930275061f52ebd538c906ef8819af56dbd`](https://github.com/verl-project/verl/commit/8a694930275061f52ebd538c906ef8819af56dbd),
+which is recorded in [`.github/verl_pin.txt`](../../.github/verl_pin.txt). Keep
+that pin when running this recipe: its V1 TransferQueue, colocated reward-model
+lifecycle, and multimodal dataset hook are the interfaces validated here.
+
 ```text
 R_QI = r_format + r_answer + 0.5 * (r_consistency + r_completeness)
 ```
@@ -300,19 +306,28 @@ Install `ffmpeg` on every training worker when extracting audio from video.
 
 ### Start the QI judge and train on NPU
 
-Serve `Qwen/Qwen3-VL-235B-A22B-Instruct` (the judge used by the paper) behind
-an OpenAI-compatible `/v1/chat/completions` endpoint, then launch the NPU V1
-trainer:
+The launcher deploys the resource-efficient default judge,
+`Qwen/Qwen3-VL-30B-A3B-Instruct`, through verl's reward-model router on the
+same NPU resource pool as training. Actor rollout and reward inference are
+time-multiplexed: the actor rollout sleeps while the reward model is awake,
+and the reward model releases its cache before actor work resumes. The default
+16-card topology uses reward TP 8 and two replicas.
 
 ```bash
-export OMNIVIDEO_QI_JUDGE_URL=http://judge-host:8000/v1
-export OMNIVIDEO_QI_JUDGE_MODEL=Qwen/Qwen3-VL-235B-A22B-Instruct
+export OMNIVIDEO_QI_JUDGE_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct
 
 TRAIN_FILE=$HOME/data/omnivideo_r1_qi/train.parquet \
 VAL_FILE=$HOME/data/omnivideo_r1_qi/validation.parquet \
 MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
 bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_omnivideo_qi_v1.sh
 ```
+
+Set `REWARD_TP` and `REWARD_GPU_MEMORY_UTILIZATION` to tune the colocated
+deployment. To reproduce the paper's judge choice, set
+`OMNIVIDEO_QI_JUDGE_MODEL=Qwen/Qwen3-VL-235B-A22B-Instruct` and increase
+`REWARD_TP` as capacity requires. An existing external service remains
+supported: setting `OMNIVIDEO_QI_JUDGE_URL` disables the colocated server and
+routes QI judge requests to that OpenAI-compatible endpoint.
 
 The recipe follows the paper's GSPO settings: eight rollouts, learning rate
 `1e-6`, clip bounds `3e-4`/`4e-4`, KL coefficient `0.03`, 5% warmup, maximum

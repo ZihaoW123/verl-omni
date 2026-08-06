@@ -119,3 +119,25 @@ def test_judge_config_normalizes_openai_base_url(monkeypatch):
 
     assert config.url == "http://judge:8000/v1/chat/completions"
     assert config.model == "local-judge"
+
+
+def test_judge_config_uses_resource_efficient_default(monkeypatch):
+    monkeypatch.setenv("OMNIVIDEO_QI_JUDGE_URL", "http://judge:8000/v1")
+    monkeypatch.delenv("OMNIVIDEO_QI_JUDGE_MODEL", raising=False)
+
+    config = omnivideo_qi._judge_config()
+
+    assert config.model == "Qwen/Qwen3-VL-30B-A3B-Instruct"
+
+
+def test_judge_config_uses_colocated_reward_router(monkeypatch):
+    monkeypatch.delenv("OMNIVIDEO_QI_JUDGE_URL", raising=False)
+    monkeypatch.delenv("OMNIVIDEO_QI_JUDGE_MODEL", raising=False)
+
+    config = omnivideo_qi._judge_config(
+        reward_router_address="reward-router:9000",
+        reward_model_tokenizer=SimpleNamespace(name_or_path="/models/qwen3-vl-30b"),
+    )
+
+    assert config.url == "http://reward-router:9000/v1/chat/completions"
+    assert config.model == "/models/qwen3-vl-30b"
