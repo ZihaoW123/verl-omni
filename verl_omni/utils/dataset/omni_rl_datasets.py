@@ -39,7 +39,9 @@ class QwenOmniRLHFDataset(RLHFDataset):
         from qwen_omni_utils import process_mm_info
 
         # Qwen returns (audios, images, videos); verl expects
-        # (images, videos, audios). AVQA uses a standalone audio track rather
-        # than extracting audio from a video.
-        audios, images, videos = process_mm_info(messages, use_audio_in_video=False)
+        # (images, videos, audios). AVQA uses a standalone audio track, while
+        # datasets such as OmniVideo-R1 can read the audio stream directly
+        # from each video to avoid duplicating media on disk.
+        use_audio_in_video = bool((config or {}).get("use_audio_in_video", False))
+        audios, images, videos = process_mm_info(messages, use_audio_in_video=use_audio_in_video)
         return images, videos, audios

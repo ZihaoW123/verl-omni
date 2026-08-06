@@ -58,3 +58,23 @@ def test_process_multi_modal_info_uses_qwen_omni_utils_and_reorders_outputs(monk
 
     assert result == (images, videos, audios)
     assert calls == [(messages, False)]
+
+
+def test_process_multi_modal_info_can_extract_audio_from_video(monkeypatch):
+    calls = []
+
+    def fake_process_mm_info(messages, use_audio_in_video):
+        calls.append((messages, use_audio_in_video))
+        return ["audio"], None, ["video"]
+
+    monkeypatch.setitem(sys.modules, "qwen_omni_utils", SimpleNamespace(process_mm_info=fake_process_mm_info))
+    messages = [{"role": "user", "content": [{"type": "video", "video": "/data/sample.mp4"}]}]
+
+    result = QwenOmniRLHFDataset._process_multi_modal_info(
+        messages,
+        image_patch_size=14,
+        config={"use_audio_in_video": True},
+    )
+
+    assert result == (None, ["video"], ["audio"])
+    assert calls == [(messages, True)]

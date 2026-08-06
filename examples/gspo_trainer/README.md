@@ -258,6 +258,69 @@ preserves its `RLHFDataset` base class, sets rollout NPU memory utilization to
 extracts the first `<answer>...</answer>` payload and returns a binary exact-match
 reward against the tagged dataset label.
 
+## OmniVideo-R1 query-intensive grounding
+
+The QI recipe trains Qwen3-Omni on
+[`merged_train_all_qi.jsonl`](https://huggingface.co/datasets/jankin123/OmniVideo-R1/blob/main/merged_train_all_qi.jsonl)
+with video, its audio stream, and question text as input. It implements only the
+paper's first-stage reward:
+
+```text
+R_QI = r_format + r_answer + 0.5 * (r_consistency + r_completeness)
+```
+
+`r_format` validates the strict ordered, non-overlapping
+`<time>/<caption>...<thinking>/<answer>` structure. Multiple-choice answers use
+letter exact match; open-ended answers and both grounding rewards use an
+OpenAI-compatible Qwen3-VL judge. The consistency and completeness prompts
+follow Figures 11 and 12 of the paper. MA contrastive rollout and `r_attention`
+are intentionally out of scope.
+
+### Prepare the QI parquet
+
+Download the annotations plus the corresponding LLaVA-Video-178K and
+VideoVista media. Map annotation path prefixes explicitly to the shared local
+media mount:
+
+```bash
+python examples/gspo_trainer/data_process/omnivideo_r1_qi.py \
+    --input /path/to/merged_train_all_qi.jsonl \
+    --output_dir ~/data/omnivideo_r1_qi \
+    --path_map ./data/LLaVA-Video-178K=/shared/data/LLaVA-Video-178K \
+    --path_map ./data/VideoVista_Train=/shared/data/VideoVista_Train
+```
+
+The converter validates the real 88,173-row JSONL schema, drops missing media,
+caps each policy input at 64 frames, and splits by video path so validation
+cannot share a video with training. By default, Qwen's media loader extracts
+the audio stream directly from each video; use `--no-audio_from_video` and add
+an audio path map only when separately extracted audio files are preferred.
+Install `ffmpeg` on every training worker when extracting audio from video.
+`--max_samples 40 --val_size 8` is useful for a local smoke subset.
+
+### Start the QI judge and train on NPU
+
+Serve `Qwen/Qwen3-VL-235B-A22B-Instruct` (the judge used by the paper) behind
+an OpenAI-compatible `/v1/chat/completions` endpoint, then launch the NPU V1
+trainer:
+
+```bash
+export OMNIVIDEO_QI_JUDGE_URL=http://judge-host:8000/v1
+export OMNIVIDEO_QI_JUDGE_MODEL=Qwen/Qwen3-VL-235B-A22B-Instruct
+
+TRAIN_FILE=$HOME/data/omnivideo_r1_qi/train.parquet \
+VAL_FILE=$HOME/data/omnivideo_r1_qi/validation.parquet \
+MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
+bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_omnivideo_qi_v1.sh
+```
+
+The recipe follows the paper's GSPO settings: eight rollouts, learning rate
+`1e-6`, clip bounds `3e-4`/`4e-4`, KL coefficient `0.03`, 5% warmup, maximum
+combined sequence length 32,768, and 64 input frames. Its default batch size is
+reduced to 32 for the 16 x 910C topology inherited from the AVQA V1 recipe;
+set `TRAIN_BATCH_SIZE=256` only with capacity comparable to the paper's
+128 x H20 setup.
+
 ## Performance
 
 All GPU results measured on a single node of **4 × H800 80GB**, actor and
