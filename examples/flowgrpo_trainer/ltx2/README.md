@@ -19,6 +19,22 @@ with the following split:
 - `train.txt`: 48,976 prompts
 - `test.txt`: 1,024 prompts
 
+Reproduce the data selection and split from the downloaded
+`video_prompts.txt` file with:
+
+```python
+import random
+
+with open("video_prompts.txt") as f:
+    prompts = [line.strip() for line in f]
+
+random.seed(42)
+random.shuffle(prompts)
+
+test = prompts[:1024]
+train = prompts[1024:]
+```
+
 Use `dataset/vid_prompt/train.txt` and `test.txt`:
 
 ```bash
