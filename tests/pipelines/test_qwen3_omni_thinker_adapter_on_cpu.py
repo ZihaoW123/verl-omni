@@ -96,25 +96,6 @@ def test_configure_processor_binds_multimodal_pad_dedup(monkeypatch):
     monkeypatch.setattr(AutoProcessor, "from_pretrained", lambda *args, **kwargs: processor)
     monkeypatch.setattr(AutoConfig, "from_pretrained", lambda *args, **kwargs: config)
 
-    class AgentLoopWorker:
-        def _compute_position_ids(self, input_ids, attention_mask, multi_modal_inputs, mm_processor_kwargs=None):
-            del input_ids, attention_mask, multi_modal_inputs, mm_processor_kwargs
-
-    agent_loop_tq_module = types.ModuleType("verl.trainer.ppo.v1.agent_loop_tq")
-    agent_loop_tq_module.AgentLoopWorkerTQ = SimpleNamespace(
-        __ray_metadata__=SimpleNamespace(modified_class=AgentLoopWorker)
-    )
-    for package_name in (
-        "verl",
-        "verl.trainer",
-        "verl.trainer.ppo",
-        "verl.trainer.ppo.v1",
-    ):
-        package = types.ModuleType(package_name)
-        package.__path__ = []
-        monkeypatch.setitem(sys.modules, package_name, package)
-    monkeypatch.setitem(sys.modules, "verl.trainer.ppo.v1.agent_loop_tq", agent_loop_tq_module)
-
     configured = Qwen3OmniThinkerAdapter.configure_processor(
         "/fake/qwen3-omni",
         SimpleNamespace(trust_remote_code=False),
@@ -135,8 +116,8 @@ def test_configure_processor_binds_multimodal_pad_dedup(monkeypatch):
     ]
 
 
-def test_v1_adapter_supplies_qwen3_omni_audio_and_video_rope_inputs(monkeypatch):
-    """The V1 worker wrapper supplies both Qwen3-Omni RoPE auxiliaries."""
+def test_v1_processor_hook_supplies_qwen3_omni_audio_and_video_rope_inputs(monkeypatch):
+    """The processor hook supplies both Qwen3-Omni RoPE auxiliaries."""
     pytest.importorskip("transformers")
     _require_version("transformers", "5.0.0")
 
@@ -173,23 +154,15 @@ def test_v1_adapter_supplies_qwen3_omni_audio_and_video_rope_inputs(monkeypatch)
     class AgentLoopWorker:
         def _compute_position_ids(self, input_ids, attention_mask, multi_modal_inputs, mm_processor_kwargs=None):
             del mm_processor_kwargs
+            rope_kwargs = self.processor.get_rope_index_kwargs(multi_modal_inputs)
             position_ids, _ = self.processor.get_rope_index(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 image_grid_thw=multi_modal_inputs.get("image_grid_thw"),
                 video_grid_thw=multi_modal_inputs.get("video_grid_thw"),
+                **rope_kwargs,
             )
             return position_ids
-
-    agent_loop_tq_module = types.ModuleType("verl.trainer.ppo.v1.agent_loop_tq")
-    agent_loop_tq_module.AgentLoopWorkerTQ = SimpleNamespace(
-        __ray_metadata__=SimpleNamespace(modified_class=AgentLoopWorker)
-    )
-    for package_name in ("verl", "verl.trainer", "verl.trainer.ppo", "verl.trainer.ppo.v1"):
-        package = types.ModuleType(package_name)
-        package.__path__ = []
-        monkeypatch.setitem(sys.modules, package_name, package)
-    monkeypatch.setitem(sys.modules, "verl.trainer.ppo.v1.agent_loop_tq", agent_loop_tq_module)
 
     def _get_rope_index(
         processor,
@@ -223,6 +196,7 @@ def test_v1_adapter_supplies_qwen3_omni_audio_and_video_rope_inputs(monkeypatch)
         "/fake/qwen3-omni",
         SimpleNamespace(trust_remote_code=False),
     )
+    assert hasattr(configured, "get_rope_index_kwargs")
     worker = SimpleNamespace(processor=configured)
     input_ids = torch.tensor([[1, 2, 3]])
     attention_mask = torch.ones_like(input_ids)
