@@ -3,7 +3,6 @@
 set -x
 
 export WANDB_MODE=${WANDB_MODE:-offline}
-export VERL_DATAPROTO_SERIALIZATION_METHOD=numpy
 ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/ascend-toolkit}
 
 source $ASCEND_HOME_PATH/set_env.sh
@@ -103,6 +102,7 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.rollout.algo.sde_window_size=3 \
     actor_rollout_ref.rollout.algo.sde_contiguous=False \
     actor_rollout_ref.rollout.algo.sde_window_seed=42 \
+    actor_rollout_ref.rollout.calculate_log_probs=True \
     actor_rollout_ref.rollout.val_kwargs.pipeline.height=256 \
     actor_rollout_ref.rollout.val_kwargs.pipeline.width=384 \
     actor_rollout_ref.rollout.val_kwargs.pipeline.num_frames=81 \
