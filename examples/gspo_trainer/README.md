@@ -266,7 +266,7 @@ with video, its audio stream, and question text as input. It implements only the
 paper's first-stage reward:
 
 This recipe is implemented and tested against verl commit
-[`8a694930275061f52ebd538c906ef8819af56dbd`](https://github.com/verl-project/verl/commit/8a694930275061f52ebd538c906ef8819af56dbd),
+[`ed40bc14f6ecdbb574b7ecfbf3abe9cb11743f98`](https://github.com/verl-project/verl/commit/ed40bc14f6ecdbb574b7ecfbf3abe9cb11743f98),
 which is recorded in [`.github/verl_pin.txt`](../../.github/verl_pin.txt). Keep
 that pin when running this recipe: its V1 TransferQueue, colocated reward-model
 lifecycle, and multimodal dataset hook are the interfaces validated here.
