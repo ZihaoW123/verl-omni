@@ -99,10 +99,9 @@ def test_ltx2_training_adapter_splits_joint_latents() -> None:
 
 def test_ltx2_non_contiguous_sde_step_selection_is_seeded() -> None:
     pipeline = object.__new__(LTX23PipelineWithLogProb)
-    pipeline._flow_grpo_sde_steps = list(range(10))
-    pipeline._flow_grpo_num_sde_steps = 3
-    pipeline._flow_grpo_window_size = None
-    pipeline._flow_grpo_window_range = None
+    pipeline._flow_grpo_window_size = 3
+    pipeline._flow_grpo_window_range = [0, 10]
+    pipeline._flow_grpo_sde_contiguous = False
     pipeline._flow_grpo_seed = 42
 
     first = pipeline._select_sde_steps(24, torch.device("cpu"))
@@ -111,6 +110,7 @@ def test_ltx2_non_contiguous_sde_step_selection_is_seeded() -> None:
     assert len(first) == 3
     assert first == sorted(first)
     assert set(first).issubset(set(range(10)))
+    assert first != list(range(first[0], first[0] + len(first)))
 
 
 def test_vllm_omni_server_forwards_audio_for_rewards() -> None:

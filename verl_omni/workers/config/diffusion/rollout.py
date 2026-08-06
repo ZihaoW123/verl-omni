@@ -42,8 +42,7 @@ class DiffusionRolloutAlgoConfig(BaseConfig):
     sde_type: str = "sde"
     sde_window_size: Optional[int] = None
     sde_window_range: Optional[list[int]] = None
-    sde_steps: Optional[list[int]] = None
-    num_sde_steps: Optional[int] = None
+    sde_contiguous: bool = True
 
     # MixGRPO-only configs
     sample_strategy: str = "random"

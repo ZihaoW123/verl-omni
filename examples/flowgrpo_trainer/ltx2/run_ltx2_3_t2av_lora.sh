@@ -89,8 +89,9 @@ python3 -m verl_omni.trainer.main_diffusion \
     +actor_rollout_ref.rollout.pipeline.output_type=pt \
     actor_rollout_ref.rollout.algo.noise_level=0.8 \
     actor_rollout_ref.rollout.algo.sde_type=cps \
-    actor_rollout_ref.rollout.algo.sde_steps="[0,1,2,3,4,5,6,7,8,9]" \
-    actor_rollout_ref.rollout.algo.num_sde_steps=3 \
+    actor_rollout_ref.rollout.algo.sde_window_range="[0,10]" \
+    actor_rollout_ref.rollout.algo.sde_window_size=3 \
+    actor_rollout_ref.rollout.algo.sde_contiguous=False \
     actor_rollout_ref.rollout.algo.sde_window_seed=42 \
     actor_rollout_ref.rollout.val_kwargs.pipeline.height=256 \
     actor_rollout_ref.rollout.val_kwargs.pipeline.width=384 \

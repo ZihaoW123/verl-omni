@@ -76,6 +76,12 @@ The current scripts use a training batch size of 32, eight rollouts per prompt,
 a PPO mini-batch size of 16, and 100 total training steps by default. Outputs
 are written below `OUTPUT_DIR`, including checkpoints and timestamped logs.
 
+For each rollout, the recipe samples three non-contiguous SDE transitions from
+the step range `[0, 10)`. This is configured with `sde_window_size=3`,
+`sde_window_range=[0,10]`, and `sde_contiguous=False`. The default
+`sde_contiguous=True` retains the consecutive-window behavior used by existing
+diffusion recipes.
+
 The reference training recipe maintains a separate EMA evaluation copy.
 The current verl-omni FlowGRPO trainer evaluates and checkpoints the live LoRA
 policy, so the EMA-only evaluation behavior is the one reference option not

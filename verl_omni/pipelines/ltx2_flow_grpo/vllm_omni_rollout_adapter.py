@@ -55,10 +55,9 @@ class LTX23PipelineWithLogProb(LTX23Pipeline):
         )
         self._flow_grpo_noise_level = 0.8
         self._flow_grpo_sde_type = "cps"
-        self._flow_grpo_sde_steps: list[int] | None = None
-        self._flow_grpo_num_sde_steps: int | None = None
         self._flow_grpo_window_size: int | None = None
         self._flow_grpo_window_range: list[int] | None = None
+        self._flow_grpo_sde_contiguous = True
         self._flow_grpo_logprobs = True
         self._flow_grpo_seed = 42
         self._flow_grpo_prompt_context: _LTX23PromptContext | None = None
@@ -138,10 +137,9 @@ class LTX23PipelineWithLogProb(LTX23Pipeline):
         extra_args = req.sampling_params.extra_args or {}
         self._flow_grpo_noise_level = float(extra_args.get("noise_level", 0.8))
         self._flow_grpo_sde_type = extra_args.get("sde_type", "cps")
-        self._flow_grpo_sde_steps = extra_args.get("sde_steps")
-        self._flow_grpo_num_sde_steps = extra_args.get("num_sde_steps")
         self._flow_grpo_window_size = extra_args.get("sde_window_size")
         self._flow_grpo_window_range = extra_args.get("sde_window_range")
+        self._flow_grpo_sde_contiguous = bool(extra_args.get("sde_contiguous", True))
         self._flow_grpo_logprobs = bool(extra_args.get("logprobs", True))
         scheduler_seed = int(extra_args.get("sde_window_seed", 42))
         global_step = int(extra_args.get("global_steps", 1))
@@ -149,32 +147,22 @@ class LTX23PipelineWithLogProb(LTX23Pipeline):
 
     def _select_sde_steps(self, num_steps: int, device: torch.device) -> list[int]:
         del device
-        if self._flow_grpo_sde_steps is not None:
-            eligible = sorted({int(step) for step in self._flow_grpo_sde_steps if 0 <= int(step) < num_steps})
-            if not eligible:
-                raise ValueError(
-                    f"No valid LTX SDE steps remain after filtering {self._flow_grpo_sde_steps} "
-                    f"against num_inference_steps={num_steps}."
-                )
-            count = self._flow_grpo_num_sde_steps
-            if count is None or count >= len(eligible):
-                return eligible
-            generator = torch.Generator().manual_seed(self._flow_grpo_seed)
-            order = torch.randperm(len(eligible), generator=generator)[: int(count)].tolist()
-            return sorted(eligible[index] for index in order)
-
         if self._flow_grpo_window_size is not None:
             window_size = int(self._flow_grpo_window_size)
             window_range = self._flow_grpo_window_range or [0, num_steps]
             low = int(window_range[0])
             high = min(int(window_range[1]), num_steps)
-            if window_size <= 0 or high - low < window_size:
+            if low < 0 or window_size <= 0 or high - low < window_size:
                 raise ValueError(
                     f"Invalid LTX SDE window: size={window_size}, range={window_range}, num_steps={num_steps}."
                 )
             generator = torch.Generator().manual_seed(self._flow_grpo_seed)
-            start = int(torch.randint(low, high - window_size + 1, (1,), generator=generator).item())
-            return list(range(start, start + window_size))
+            if self._flow_grpo_sde_contiguous:
+                start = int(torch.randint(low, high - window_size + 1, (1,), generator=generator).item())
+                return list(range(start, start + window_size))
+
+            order = torch.randperm(high - low, generator=generator)[:window_size].tolist()
+            return sorted(low + index for index in order)
 
         return list(range(max(num_steps - 1, 0)))
 
