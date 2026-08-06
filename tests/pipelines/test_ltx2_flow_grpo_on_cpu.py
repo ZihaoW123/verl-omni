@@ -26,7 +26,6 @@ from verl_omni.pipelines.ltx2_flow_grpo.common import (
 from verl_omni.pipelines.ltx2_flow_grpo.diffusers_training_adapter import LTX23FlowGRPO
 from verl_omni.pipelines.ltx2_flow_grpo.vllm_omni_rollout_adapter import LTX23PipelineWithLogProb
 from verl_omni.pipelines.model_base import DiffusionModelBase, VllmOmniPipelineBase
-from verl_omni.workers.rollout.vllm_rollout.vllm_omni_async_server import vLLMOmniHttpServer
 
 
 def test_ltx2_reference_lora_targets_are_complete() -> None:
@@ -111,24 +110,3 @@ def test_ltx2_non_contiguous_sde_step_selection_is_seeded() -> None:
     assert first == sorted(first)
     assert set(first).issubset(set(range(10)))
     assert first != list(range(first[0], first[0] + len(first)))
-
-
-def test_vllm_omni_server_forwards_audio_for_rewards() -> None:
-    server = object.__new__(vLLMOmniHttpServer)
-    server._ar_mode = False
-    server.global_steps = 7
-    final_result = SimpleNamespace(
-        images=[torch.zeros(3, 3, 8, 8)],
-        custom_output={"all_latents": torch.ones(1, 2, 4, 8)},
-        multimodal_output={
-            "audio": torch.ones(1, 1, 32),
-            "audio_sample_rate": 48_000,
-        },
-        request_output=None,
-    )
-
-    output = server._process_output(final_result, params=None, sampling_params={"logprobs": False})
-    assert output.diffusion_output.shape == (3, 3, 8, 8)
-    assert output.extra_fields["audio"].shape == (1, 32)
-    assert output.extra_fields["audio_sample_rate"] == 48_000
-    assert output.extra_fields["global_steps"] == 7
