@@ -1,7 +1,7 @@
 # LTX-2.3 text-to-audio-video FlowGRPO
 
 This recipe trains `dg845/LTX-2.3-Diffusers` LoRA adapters with a diffusers +
-FSDP2 actor, vLLM-Omni rollout, joint audio-video CPS transitions, and the CLAP
+FSDP actor, vLLM-Omni rollout, joint audio-video CPS transitions, and the CLAP
 plus ImageBind rewards.
 The checkpoint advertises `_class_name: LTX2Pipeline`; the registered rollout
 adapter uses vLLM-Omni's LTX-2.3-specific `LTX23Pipeline` implementation behind
@@ -46,17 +46,35 @@ Review the ImageBind license before enabling this reward in your environment.
 
 ## Launch
 
+### GPU
+
 ```bash
 bash examples/flowgrpo_trainer/ltx2/run_ltx2_3_t2av_lora.sh
 ```
 
-The recipe defaults to 8 GPUs and vLLM-Omni tensor parallel size 8. Override
-`NUM_GPUS`, `ROLLOUT_TP`, `MODEL_PATH`, `DATA_DIR`, `OUTPUT_DIR`, or
-`TOTAL_TRAINING_STEPS` through environment variables. Extra Hydra overrides can
-be appended to the command. One verl-omni global step consumes the same 48
-unique prompts and 16 responses per prompt as one reference training epoch. The
-default 15 global steps and a 24-prompt PPO mini-batch therefore reproduce the
-reference recipe's 15 epochs and two optimizer updates per epoch.
+The GPU recipe defaults to 8 GPUs, vLLM-Omni tensor parallel size 2, and one
+reward worker. CLAP and ImageBind run on `cuda:0` and `cuda:1`, respectively.
+
+### Ascend NPU
+
+```bash
+bash examples/flowgrpo_trainer/ltx2/run_ltx2_3_t2av_lora_npu.sh
+```
+
+The NPU recipe defaults to 16 NPUs, vLLM-Omni tensor parallel size 4, one reward
+worker, and reward devices `npu:0` and `npu:1`. It sources the Ascend toolkit
+and ATB environment from `ASCEND_HOME_PATH`, which defaults to
+`/usr/local/Ascend/ascend-toolkit`.
+
+Both launch scripts accept `WORKSPACE`, `MODEL_PATH`, `DATA_DIR`, `OUTPUT_DIR`,
+`NUM_GPUS`, `ROLLOUT_TP`, `TOTAL_TRAINING_STEPS`, and `WANDB_MODE` through
+environment variables. The NPU script additionally accepts `ASCEND_HOME_PATH`,
+`CLAP_MODEL_PATH`, `IMAGEBIND_MODEL_PATH`, `REWARD_DEVICE`, and
+`REWARD_NUM_WORKERS`. Extra Hydra overrides can be appended to either command.
+
+The current scripts use a training batch size of 32, eight rollouts per prompt,
+a PPO mini-batch size of 16, and 100 total training steps by default. Outputs
+are written below `OUTPUT_DIR`, including checkpoints and timestamped logs.
 
 The reference training recipe maintains a separate EMA evaluation copy.
 The current verl-omni FlowGRPO trainer evaluates and checkpoints the live LoRA
