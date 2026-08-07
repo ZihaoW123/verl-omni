@@ -28,7 +28,7 @@ dependencies = [
     "hydra-core",
     "pandas",
     "peft",
-    "pyarrow>=19.0.0",
+    "pyarrow>=19.0.0,<25.0.0",
     "pybind11",
     "pylatexenc",
     "ray[default]",
