@@ -12,21 +12,23 @@
 set -x
 
 detect_device() {
-    if nvidia-smi &>/dev/null; then
-        echo "gpu"
+    if npu-smi info &>/dev/null; then
+        DEVICE="npu"
+    elif nvidia-smi &>/dev/null; then
+        DEVICE="gpu"
     else
-        echo "npu"
+        echo "Error: Neither NPU (npu-smi) nor GPU (nvidia-smi) detected." >&2
+        exit 1
     fi
 }
 
-DEVICE=$(detect_device)
+detect_device
 echo "Detected device: $DEVICE"
 
 if [ "$DEVICE" = "npu" ]; then
     ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.0.0}
     source $ASCEND_HOME_PATH/set_env.sh
     source $ASCEND_HOME_PATH/../nnal/atb/set_env.sh
-    export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1
     export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:='expandable_segments:True'}
     export MULTI_STREAM_MEMORY_REUSE=${MULTI_STREAM_MEMORY_REUSE:=2}
 
@@ -55,6 +57,7 @@ export custom_reward_model_path=$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors
 custom_reward_function_path=verl_omni/utils/reward_score/hpsv3_reward.py
 
 ROLLOUT_TP=1
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-64}
 
 ENGINE=vllm_omni
 
@@ -65,7 +68,7 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.actor.diffusion_loss.loss_mode=dance_grpo \
     data.train_files=$hpsv3_train_path \
     data.val_files=$hpsv3_test_path \
-    data.train_batch_size=64 \
+    data.train_batch_size=$TRAIN_BATCH_SIZE \
     data.max_prompt_length=1024 \
     data.seed=42 \
     actor_rollout_ref.model.path=$model_name \
