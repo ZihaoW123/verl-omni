@@ -11,18 +11,14 @@
 #
 set -x
 
-detect_device() {
-    if npu-smi info &>/dev/null; then
-        DEVICE="npu"
-    elif nvidia-smi &>/dev/null; then
-        DEVICE="gpu"
-    else
-        echo "Error: Neither NPU (npu-smi) nor GPU (nvidia-smi) detected." >&2
-        exit 1
-    fi
-}
-
-detect_device
+if npu-smi info &>/dev/null; then
+    DEVICE="npu"
+elif nvidia-smi &>/dev/null; then
+    DEVICE="gpu"
+else
+    echo "Error: Neither NPU (npu-smi) nor GPU (nvidia-smi) detected." >&2
+    exit 1
+fi
 echo "Detected device: $DEVICE"
 
 if [ "$DEVICE" = "npu" ]; then
