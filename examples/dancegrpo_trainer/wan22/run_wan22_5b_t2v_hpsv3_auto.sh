@@ -45,11 +45,11 @@ fi
 
 WORKSPACE=${WORKSPACE:-$HOME}
 
-hpsv3_train_path=$WORKSPACE/data/hpsv3/train.parquet
-hpsv3_test_path=$WORKSPACE/data/hpsv3/test.parquet
+train_files_path=${TRAIN_FILES_PATH:-$WORKSPACE/data/hpsv3/train.parquet}
+val_files_path=${VAL_FILES_PATH:-$WORKSPACE/data/hpsv3/test.parquet}
 
 model_name=${MODEL_NAME:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}
-export custom_reward_model_path=${custom_reward_model_path:-$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors}
+export custom_reward_model_path=${CUSTOM_REWARD_MODEL_PATH:-$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors}
 custom_reward_function_path=verl_omni/utils/reward_score/hpsv3_reward.py
 
 ROLLOUT_TP=1
@@ -62,8 +62,8 @@ python3 -m verl_omni.trainer.main_diffusion \
     algorithm.adv_estimator=dance_grpo \
     actor_rollout_ref.model.algorithm=dance_grpo \
     actor_rollout_ref.actor.diffusion_loss.loss_mode=dance_grpo \
-    data.train_files=$hpsv3_train_path \
-    data.val_files=$hpsv3_test_path \
+    data.train_files=$train_files_path \
+    data.val_files=$val_files_path \
     data.train_batch_size=$TRAIN_BATCH_SIZE \
     data.max_prompt_length=1024 \
     data.seed=42 \
