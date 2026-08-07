@@ -265,11 +265,24 @@ The QI recipe trains Qwen3-Omni on
 with video, its audio stream, and question text as input. It implements only the
 paper's first-stage reward:
 
-This recipe is implemented and tested against verl commit
+The repository-wide verl pin remains
+[`8a694930275061f52ebd538c906ef8819af56dbd`](https://github.com/verl-project/verl/commit/8a694930275061f52ebd538c906ef8819af56dbd)
+for compatibility with the other model recipes. OmniVideo-R1 QI specifically
+requires verl commit
 [`ed40bc14f6ecdbb574b7ecfbf3abe9cb11743f98`](https://github.com/verl-project/verl/commit/ed40bc14f6ecdbb574b7ecfbf3abe9cb11743f98),
-which is recorded in [`.github/verl_pin.txt`](../../.github/verl_pin.txt). Keep
-that pin when running this recipe: its V1 TransferQueue, colocated reward-model
-lifecycle, and multimodal dataset hook are the interfaces validated here.
+which includes the `get_rope_index_kwargs` processor hook required by
+Qwen3-Omni audio/video position IDs. Install it in a separate environment for
+this recipe so the repository default remains unchanged:
+
+```bash
+python3 -m pip install --no-deps --force-reinstall \
+  "verl @ git+https://github.com/verl-project/verl.git@ed40bc14f6ecdbb574b7ecfbf3abe9cb11743f98"
+```
+
+For the NPU Docker images, pass
+`--build-arg VERL_REF=ed40bc14f6ecdbb574b7ecfbf3abe9cb11743f98`
+instead. This recipe is implemented and tested against that commit's V1
+TransferQueue, colocated reward-model lifecycle, and multimodal processor hook.
 
 ```text
 R_QI = r_format + r_answer + 0.5 * (r_consistency + r_completeness)
