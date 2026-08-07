@@ -52,8 +52,8 @@ WORKSPACE=${WORKSPACE:-$HOME}
 hpsv3_train_path=$WORKSPACE/data/hpsv3/train.parquet
 hpsv3_test_path=$WORKSPACE/data/hpsv3/test.parquet
 
-model_name=Wan-AI/Wan2.2-TI2V-5B-Diffusers
-export custom_reward_model_path=$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors
+model_name=${MODEL_NAME:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}
+export custom_reward_model_path=${custom_reward_model_path:-$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors}
 custom_reward_function_path=verl_omni/utils/reward_score/hpsv3_reward.py
 
 ROLLOUT_TP=1
