@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# DEPRECATED: This package will be removed in v0.3.0.
-# The legacy Qwen3-Omni monkey-patches are no longer needed with the V1 trainer
-# (verl_omni.trainer.main_omni). Please see run_qwen3_omni_thinker_gspo_lora_v1.sh
-# for the V1 migration path.
+from .agent_loop import LTX2DiffusionSingleTurnAgentLoop
+from .diffusers_training_adapter import LTX23FlowGRPO
+from .vllm_omni_rollout_adapter import LTX23PipelineWithLogProb
+
+__all__ = [
+    "LTX2DiffusionSingleTurnAgentLoop",
+    "LTX23FlowGRPO",
+    "LTX23PipelineWithLogProb",
+]
