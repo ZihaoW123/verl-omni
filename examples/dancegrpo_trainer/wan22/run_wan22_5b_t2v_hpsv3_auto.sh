@@ -51,7 +51,7 @@ model_name=${MODEL_NAME:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}
 export custom_reward_model_path=${CUSTOM_REWARD_MODEL_PATH:-$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors}
 custom_reward_function_path=verl_omni/utils/reward_score/hpsv3_reward.py
 
-ROLLOUT_TP=1
+ROLLOUT_TP=${ROLLOUT_TP:-1}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-64}
 
 ENGINE=vllm_omni
