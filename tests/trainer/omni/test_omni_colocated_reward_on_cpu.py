@@ -35,6 +35,13 @@ class _NestedTokens:
 
 
 def _load_trainer_module(monkeypatch):
+    def stub_module(name, **attributes):
+        module = types.ModuleType(name)
+        for key, value in attributes.items():
+            setattr(module, key, value)
+        monkeypatch.setitem(sys.modules, name, module)
+        return module
+
     def register_trainer(_name):
         return lambda cls: cls
 
@@ -42,19 +49,64 @@ def _load_trainer_module(monkeypatch):
     trainer_base.register_trainer = register_trainer
     trainer_sync = types.ModuleType("verl.trainer.ppo.v1.trainer_sync")
     trainer_sync.PPOTrainerSync = object
-    config_module = types.ModuleType("verl.utils.config")
-    config_module.omega_conf_to_dataclass = lambda *args, **kwargs: None
-    worker_config = types.ModuleType("verl_omni.workers.config")
-    worker_config.OmniModelConfig = object
-
-    for package_name in ("verl", "verl.trainer", "verl.trainer.ppo", "verl.trainer.ppo.v1", "verl.utils"):
+    package_names = (
+        "verl",
+        "verl.single_controller",
+        "verl.trainer",
+        "verl.trainer.ppo",
+        "verl.trainer.ppo.v1",
+        "verl.utils",
+        "verl.utils.checkpoint",
+        "verl.utils.dataset",
+        "verl_omni",
+        "verl_omni.trainer",
+        "verl_omni.trainer.diffusion",
+        "verl_omni.trainer.omni",
+        "verl_omni.utils",
+        "verl_omni.utils.dataset",
+        "verl_omni.workers",
+    )
+    for package_name in package_names:
         package = types.ModuleType(package_name)
         package.__path__ = []
         monkeypatch.setitem(sys.modules, package_name, package)
+
+    stub_module("verl.protocol", DataProto=object)
+    stub_module(
+        "verl.single_controller.ray",
+        RayClassWithInitArgs=object,
+        RayWorkerGroup=object,
+        ResourcePoolManager=object,
+    )
+    stub_module("verl.single_controller.ray.base", create_colocated_worker_cls=lambda *args, **kwargs: None)
+    stub_module("verl.trainer.ppo.utils", Role=object)
     monkeypatch.setitem(sys.modules, "verl.trainer.ppo.v1.trainer_base", trainer_base)
     monkeypatch.setitem(sys.modules, "verl.trainer.ppo.v1.trainer_sync", trainer_sync)
-    monkeypatch.setitem(sys.modules, "verl.utils.config", config_module)
-    monkeypatch.setitem(sys.modules, "verl_omni.workers.config", worker_config)
+    tensordict_utils = stub_module("verl.utils.tensordict_utils", get_tensordict=lambda values: values)
+    sys.modules["verl.utils"].tensordict_utils = tensordict_utils
+    stub_module(
+        "verl.utils.checkpoint.checkpoint_manager",
+        find_latest_ckpt_path=lambda *args, **kwargs: None,
+        should_save_ckpt_esi=lambda *args, **kwargs: False,
+    )
+    stub_module("verl.utils.config", omega_conf_to_dataclass=lambda *args, **kwargs: None)
+    stub_module("verl.utils.dataset.dataset_utils", DatasetPadMode=object)
+    stub_module("verl.utils.debug", marked_timer=lambda *args, **kwargs: None)
+    stub_module("verl.utils.fs", local_mkdir_safe=lambda *args, **kwargs: None)
+    stub_module("verl.utils.metric", reduce_metrics=lambda *args, **kwargs: None)
+    stub_module("verl.utils.py_functional", rename_dict=lambda value, *args, **kwargs: value)
+    stub_module("verl.utils.tracking", Tracking=object)
+    stub_module(
+        "verl_omni.trainer.diffusion.diffusion_metric_utils",
+        compute_data_metrics_diffusion=lambda *args, **kwargs: {},
+        compute_throughput_metrics_diffusion=lambda *args, **kwargs: {},
+        compute_timing_metrics_diffusion=lambda *args, **kwargs: {},
+    )
+    stub_module("verl_omni.trainer.diffusion.diffusion_trainer_utils", NoOpCheckpointManager=object)
+    stub_module("verl_omni.trainer.omni.omni_algos", get_omni_loss_fn=lambda *args, **kwargs: None)
+    stub_module("verl_omni.utils.dataset.offline_mllm_dpo_dataset", get_batch_modality=lambda *args: None)
+    stub_module("verl_omni.utils.metrics_utils", GroupedMetricMean=object)
+    stub_module("verl_omni.workers.config", OmniModelConfig=object)
 
     module_path = Path(__file__).parents[3] / "verl_omni" / "trainer" / "omni" / "ray_omni_trainer.py"
     spec = importlib.util.spec_from_file_location("ray_omni_trainer_under_test", module_path)
