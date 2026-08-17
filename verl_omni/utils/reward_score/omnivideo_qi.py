@@ -22,8 +22,6 @@ video remains on shared storage; only a bounded set of sampled segment frames
 is sent to the judge.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

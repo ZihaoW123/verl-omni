@@ -30,6 +30,17 @@ def _load_reward_module():
     return module
 
 
+def test_reward_module_supports_unregistered_dynamic_import():
+    path = Path(__file__).parents[3] / "verl_omni/utils/reward_score/omnivideo_qi.py"
+    spec = importlib.util.spec_from_file_location("omnivideo_qi_dynamic_reward", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    spec.loader.exec_module(module)
+
+    assert callable(module.compute_score)
+
+
 omnivideo_qi = _load_reward_module()
 
 VALID_RESPONSE = """<time>1.0-2.5</time><caption>A person opens the door.</caption>
