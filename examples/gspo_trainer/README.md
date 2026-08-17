@@ -331,6 +331,47 @@ an audio path map only when separately extracted audio files are preferred.
 Install `ffmpeg` on every training worker when extracting audio from video.
 `--max_samples 40 --val_size 8` is useful for a local smoke subset.
 
+#### Recommended small video subset
+
+Downloading all of
+[LLaVA-Video-178K](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K)
+(about 1.28 TB) or
+[VideoVista-Train](https://huggingface.co/datasets/Uni-MoE/VideoVista_Train)
+(about 145 GB) is unnecessary for a small experiment. For the 2k/512 recipe,
+we recommend starting with the first three archives from the short-video
+`0_30_s_youtube_v0_1` split. Each archive is about 5.3 GB, so the initial
+download is about 15.9 GB compressed. The merged QI annotations contain 24,016
+rows from this split; downloading three archives provides practical headroom
+for the requested subset while keeping video decoding inexpensive.
+
+Download only those three archives with the Hugging Face `hf` CLI:
+
+```bash
+LLAVA_VIDEO_DIR=$HOME/data/LLaVA-Video-178K
+
+hf download lmms-lab/LLaVA-Video-178K \
+    0_30_s_youtube_v0_1/0_30_s_youtube_v0_1_videos_1.tar.gz \
+    0_30_s_youtube_v0_1/0_30_s_youtube_v0_1_videos_2.tar.gz \
+    0_30_s_youtube_v0_1/0_30_s_youtube_v0_1_videos_3.tar.gz \
+    --repo-type dataset \
+    --local-dir "$LLAVA_VIDEO_DIR"
+```
+
+Extract them while preserving the split-relative directory layout expected by
+the QI annotations:
+
+```bash
+for shard in "$LLAVA_VIDEO_DIR"/0_30_s_youtube_v0_1/*_videos_{1,2,3}.tar.gz; do
+    tar -xzf "$shard" -C "$LLAVA_VIDEO_DIR/0_30_s_youtube_v0_1"
+done
+```
+
+The archives are only a practical starting point: their exact overlap with the
+QI annotations determines the final number of usable rows. If preprocessing
+reports fewer than 2,512 kept rows, download and extract
+`0_30_s_youtube_v0_1_videos_4.tar.gz` in the same way. VideoVista is not needed
+for this recommended subset, so its `--path_map` can be omitted.
+
 To run a smaller but meaningful experiment with approximately 2,000 training
 rows and 512 validation rows, cap preprocessing at 2,512 valid rows and use 512
 as the validation target:
@@ -339,8 +380,7 @@ as the validation target:
 python examples/gspo_trainer/data_process/omnivideo_r1_qi.py \
     --input /path/to/merged_train_all_qi.jsonl \
     --output_dir ~/data/omnivideo_r1_qi_2k \
-    --path_map ./data/LLaVA-Video-178K=/shared/data/LLaVA-Video-178K \
-    --path_map ./data/VideoVista_Train=/shared/data/VideoVista_Train \
+    --path_map "./data/LLaVA-Video-178K=$LLAVA_VIDEO_DIR" \
     --max_samples 2512 \
     --val_size 512 \
     --seed 42
