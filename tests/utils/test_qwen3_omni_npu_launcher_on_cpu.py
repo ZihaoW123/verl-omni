@@ -51,6 +51,8 @@ def test_omnivideo_qi_launcher_wires_v1_gspo_and_qi_reward():
         'reward.reward_model.model_path="${OMNIVIDEO_QI_JUDGE_MODEL}"',
         "reward.reward_model.rollout.tensor_model_parallel_size=${REWARD_TP}",
         "reward.reward_model.rollout.free_cache_engine=true",
+        "REWARD_NUM_WORKERS:-$((NUM_GPUS_ACTOR_ROLLOUT_REWARD / REWARD_TP))",
+        "NUM_GPUS_ACTOR_ROLLOUT_REWARD must be divisible by REWARD_TP",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
     )
     assert all(setting in launcher for setting in required_settings)
