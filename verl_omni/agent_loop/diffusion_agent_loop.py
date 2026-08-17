@@ -36,6 +36,7 @@ from verl.utils.dataset.rl_dataset import get_dataset_class
 from verl.utils.profiler import simple_timer
 from verl.workers.rollout.llm_server import LLMServerClient
 
+from verl_omni.agent_loop.diffusion_data_proto import DiffusionDataProto
 from verl_omni.agent_loop.reward_payload import (
     create_reward_semaphore,
     run_limited_reward_request,
@@ -330,7 +331,7 @@ class DiffusionAgentLoopWorker:
                 if tool_extra_fields:
                     non_tensor_batch["tool_extra_fields"] = np.array([tool_extra_fields], dtype=object)
 
-                data = DataProto(
+                data = DiffusionDataProto(
                     batch=batch,
                     non_tensor_batch=non_tensor_batch,
                     meta_info={"validate": validate},
@@ -409,7 +410,7 @@ class DiffusionAgentLoopWorker:
         else:
             meta_info = {"metrics": metrics}
 
-        return DataProto(
+        return DiffusionDataProto(
             batch=batch,
             non_tensor_batch=non_tensor_batch,
             meta_info=meta_info,
