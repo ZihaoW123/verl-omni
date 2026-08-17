@@ -36,6 +36,11 @@ from verl.utils.dataset.rl_dataset import get_dataset_class
 from verl.utils.profiler import simple_timer
 from verl.workers.rollout.llm_server import LLMServerClient
 
+from verl_omni.agent_loop.reward_payload import (
+    create_reward_semaphore,
+    run_limited_reward_request,
+    select_tool_extra_fields,
+)
 from verl_omni.agent_loop.utils import maybe_per_rollout_seeds
 from verl_omni.workers.config import DiffusionModelConfig, DiffusionRolloutConfig
 
@@ -134,6 +139,7 @@ class DiffusionAgentLoopWorker:
 
         self.dataset_cls = get_dataset_class(config.data)
         self.reward_loop_worker_handles = reward_loop_worker_handles
+        self._reward_semaphore = create_reward_semaphore(config.reward.get("max_inflight_per_agent", None))
 
         self.tokenizer = self.model_config.tokenizer
         self.processor = self.model_config.processor
@@ -317,16 +323,24 @@ class DiffusionAgentLoopWorker:
                 non_tensor_batch = {
                     **{k: np.array([v]) for k, v in kwargs.items()},
                     "__num_turns__": np.array([output.num_turns]),
-                    "tool_extra_fields": np.array([output.extra_fields], dtype=object),
                 }
+                reward_config = getattr(self.config, "reward", {})
+                allowed_tool_extra_fields = reward_config.get("tool_extra_fields", None)
+                tool_extra_fields = select_tool_extra_fields(output.extra_fields, allowed_tool_extra_fields)
+                if tool_extra_fields:
+                    non_tensor_batch["tool_extra_fields"] = np.array([tool_extra_fields], dtype=object)
 
                 data = DataProto(
                     batch=batch,
                     non_tensor_batch=non_tensor_batch,
                     meta_info={"validate": validate},
                 )
-                selected_reward_loop_worker_handle = random.choice(self.reward_loop_worker_handles)
-                result = await selected_reward_loop_worker_handle.compute_score.remote(data)
+
+                async def request_score():
+                    selected_reward_loop_worker_handle = random.choice(self.reward_loop_worker_handles)
+                    return await selected_reward_loop_worker_handle.compute_score.remote(data)
+
+                result = await run_limited_reward_request(self._reward_semaphore, request_score)
                 output.reward_score = result["reward_score"]
                 output.extra_fields["reward_extra_info"] = result["reward_extra_info"]
             output.metrics.compute_score = timing["compute_score"]

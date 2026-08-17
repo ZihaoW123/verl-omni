@@ -13,6 +13,14 @@ defaults:
 # we launch num_workers reward managers to parallelize the reward computation
 num_workers: 8
 
+# Maximum in-flight reward RPCs from each agent worker.
+# Null preserves the legacy behavior; use 1 for a reward model that serializes inference.
+max_inflight_per_agent: null
+
+# Rollout extra fields forwarded to custom reward functions.
+# Null preserves all fields; an empty list forwards none.
+tool_extra_fields: null
+
 # custom reward function definition
 custom_reward_function:
   # The path to the file containing your customized reward function.

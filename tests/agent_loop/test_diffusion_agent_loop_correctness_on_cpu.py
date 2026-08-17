@@ -48,6 +48,8 @@ class _DummyDiffusionAgentLoopWorker:
 
     def __init__(self, reward_loop_worker_handle: _FakeRewardLoopWorkerHandle):
         self.reward_loop_worker_handles = [reward_loop_worker_handle]
+        self._reward_semaphore = None
+        self.config = SimpleNamespace(reward={})
 
 
 @pytest.mark.parametrize(
@@ -133,3 +135,32 @@ async def test_async_reward_data_proto_preserves_validate_meta_info(validate: bo
     received_data = reward_loop_worker_handle.compute_score.received_data
     assert received_data is not None
     assert received_data.meta_info == {"validate": validate}
+
+
+@pytest.mark.asyncio
+async def test_async_reward_only_sends_configured_tool_extra_fields():
+    reward_loop_worker_handle = _FakeRewardLoopWorkerHandle()
+    worker = _DummyDiffusionAgentLoopWorker(reward_loop_worker_handle)
+    worker.config.reward["tool_extra_fields"] = ["lightweight_metadata"]
+    output = DiffusionAgentLoopOutput(
+        prompt_ids=[1, 2],
+        response_diffusion_output=torch.zeros(3, 2, 2),
+        metrics=AgentLoopMetrics(),
+        extra_fields={
+            "all_latents": torch.ones(2, 4, 8, 8),
+            "prompt_embeds": torch.ones(16, 32),
+            "lightweight_metadata": "keep-me",
+        },
+    )
+
+    await worker._compute_score(
+        output,
+        prompts=torch.tensor([[1, 2]]),
+        responses=torch.zeros(1, 3, 2, 2),
+        kwargs={},
+    )
+
+    received_data = reward_loop_worker_handle.compute_score.received_data
+    assert received_data is not None
+    tool_extra_fields = received_data.non_tensor_batch["tool_extra_fields"][0]
+    assert tool_extra_fields == {"lightweight_metadata": "keep-me"}

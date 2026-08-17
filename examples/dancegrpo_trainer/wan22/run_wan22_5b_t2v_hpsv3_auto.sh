@@ -104,6 +104,8 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.rollout.val_kwargs.algo.noise_level=0.0 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     reward.num_workers=1 \
+    reward.max_inflight_per_agent=1 \
+    reward.tool_extra_fields='[]' \
     reward.reward_model.enable=False \
     reward.custom_reward_function.path=$custom_reward_function_path \
     reward.custom_reward_function.name=compute_score_hpsv3 \

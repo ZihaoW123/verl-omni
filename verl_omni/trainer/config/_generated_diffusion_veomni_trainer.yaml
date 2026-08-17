@@ -485,6 +485,8 @@ reward:
     nnodes: 0
     model_path: null
   num_workers: 8
+  max_inflight_per_agent: null
+  tool_extra_fields: null
   custom_reward_function:
     path: null
     name: compute_score
