@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -57,3 +59,40 @@ def test_omnivideo_qi_launcher_wires_v1_gspo_and_qi_reward():
     )
     assert all(setting in launcher for setting in required_settings)
     assert "OMNIVIDEO_QI_JUDGE_URL:?" not in launcher
+
+
+def test_omnivideo_qi_launcher_sources_ascend_env_without_nounset(tmp_path):
+    launcher = (
+        Path(__file__).parents[2]
+        / "examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_omnivideo_qi_v1.sh"
+    )
+    ascend_home = tmp_path / "Ascend/cann"
+    atb_home = tmp_path / "Ascend/nnal/atb"
+    bin_dir = tmp_path / "bin"
+    ascend_home.mkdir(parents=True)
+    atb_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    (ascend_home / "set_env.sh").write_text(":\n", encoding="utf-8")
+    (atb_home / "set_env.sh").write_text('test -z "$ZSH_VERSION"\n', encoding="utf-8")
+    fake_python = bin_dir / "python3"
+    fake_python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env.pop("ZSH_VERSION", None)
+    env.update(
+        {
+            "ASCEND_HOME_PATH": str(ascend_home),
+            "PATH": f"{bin_dir}:{env['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(launcher)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr

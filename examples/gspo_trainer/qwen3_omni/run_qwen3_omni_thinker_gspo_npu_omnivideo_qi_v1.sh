@@ -10,8 +10,10 @@ export VLLM_ASCEND_ENABLE_NZ=0
 export VERL_USE_EXTERNAL_MODULES=verl_omni
 
 ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.0.0}
+set +u
 source "${ASCEND_HOME_PATH}/set_env.sh"
 source "${ASCEND_HOME_PATH}/../nnal/atb/set_env.sh"
+set -u
 
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
 TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/omnivideo_r1_qi/train.parquet"}
