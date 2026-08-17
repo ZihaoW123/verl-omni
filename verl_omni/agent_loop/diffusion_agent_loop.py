@@ -37,6 +37,7 @@ from verl.utils.profiler import simple_timer
 from verl.workers.rollout.llm_server import LLMServerClient
 
 from verl_omni.agent_loop.diffusion_data_proto import DiffusionDataProto
+from verl_omni.agent_loop.host_memory import trim_host_memory
 from verl_omni.agent_loop.reward_payload import (
     create_reward_semaphore,
     run_limited_reward_request,
@@ -181,6 +182,11 @@ class DiffusionAgentLoopWorker:
               - ``reward_extra_keys`` (optional): ``List[str]``, keys for reward
                 extra info for logging/validation.
         """
+        # Ray has finished serializing the preceding return value before it can
+        # invoke this actor method again.  Reclaim those now-dead host buffers
+        # before allocating the next diffusion batch.
+        trim_host_memory()
+
         config = self.rollout_config
 
         sampling_params = {
@@ -220,8 +226,17 @@ class DiffusionAgentLoopWorker:
                 asyncio.create_task(self._run_agent_loop(task_sampling_params, validate=is_validate, **kwargs))
             )
         outputs = await asyncio.gather(*tasks)
+        # Completed asyncio Tasks retain their result.  Drop the redundant task
+        # owners before concatenating the per-sample tensors into a full batch.
+        tasks.clear()
 
         output = self._postprocess(outputs, input_non_tensor_batch=batch.non_tensor_batch)
+
+        # _postprocess has copied tensor fields into the returned batch.  Release
+        # the per-sample owners before Ray starts serializing that batch, then
+        # ask glibc to unmap any completely free arena pages.
+        outputs.clear()
+        trim_host_memory()
 
         return output
 
