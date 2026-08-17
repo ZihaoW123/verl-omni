@@ -25,9 +25,10 @@ fi
 echo "Detected device: $DEVICE"
 
 if [ "$DEVICE" = "npu" ]; then
-    # A3's glibc heap keeps large, short-lived rollout/serialization buffers in
-    # anonymous RSS.  Trim those free pages at diffusion agent step boundaries.
+    # Diagnose A3 anonymous RSS growth and trim free glibc pages at diffusion
+    # agent step boundaries. Disable diagnostics after the leak is identified.
     export VERL_OMNI_AGENT_MALLOC_TRIM=${VERL_OMNI_AGENT_MALLOC_TRIM:-1}
+    export VERL_OMNI_AGENT_MEMORY_DIAGNOSTICS=${VERL_OMNI_AGENT_MEMORY_DIAGNOSTICS:-1}
 
     ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.0.0}
     source $ASCEND_HOME_PATH/set_env.sh

@@ -37,7 +37,7 @@ from verl.utils.profiler import simple_timer
 from verl.workers.rollout.llm_server import LLMServerClient
 
 from verl_omni.agent_loop.diffusion_data_proto import DiffusionDataProto
-from verl_omni.agent_loop.host_memory import trim_host_memory
+from verl_omni.agent_loop.host_memory import trim_and_log_host_memory
 from verl_omni.agent_loop.reward_payload import (
     create_reward_semaphore,
     run_limited_reward_request,
@@ -182,10 +182,12 @@ class DiffusionAgentLoopWorker:
               - ``reward_extra_keys`` (optional): ``List[str]``, keys for reward
                 extra info for logging/validation.
         """
+        global_step = batch.meta_info.get("global_steps", "validation")
+
         # Ray has finished serializing the preceding return value before it can
         # invoke this actor method again.  Reclaim those now-dead host buffers
         # before allocating the next diffusion batch.
-        trim_host_memory()
+        trim_and_log_host_memory("step_start", global_step)
 
         config = self.rollout_config
 
@@ -236,7 +238,12 @@ class DiffusionAgentLoopWorker:
         # the per-sample owners before Ray starts serializing that batch, then
         # ask glibc to unmap any completely free arena pages.
         outputs.clear()
-        trim_host_memory()
+        payload_bytes = sum(
+            tensor.numel() * tensor.element_size()
+            for tensor in output.batch.values()
+            if isinstance(tensor, torch.Tensor)
+        )
+        trim_and_log_host_memory("return_ready", global_step, payload_bytes)
 
         return output
 

@@ -39,3 +39,47 @@ def test_trim_host_memory_is_portable(monkeypatch):
     monkeypatch.setattr(host_memory.gc, "collect", lambda: None)
 
     assert host_memory.trim_host_memory() is False
+
+
+def test_diagnostics_distinguish_python_glibc_and_anonymous_memory(monkeypatch, caplog):
+    snapshots = iter(
+        [
+            {"rss_kib": 200 * 1024, "private_dirty_kib": 180 * 1024},
+            {
+                "rss_kib": 150 * 1024,
+                "rss_anon_kib": 140 * 1024,
+                "private_dirty_kib": 130 * 1024,
+                "anon_private_dirty_kib": 100 * 1024,
+                "glibc_inuse_bytes": 80 * 1024 * 1024,
+            },
+        ]
+    )
+    monkeypatch.setenv("VERL_OMNI_AGENT_MEMORY_DIAGNOSTICS", "1")
+    monkeypatch.setattr(host_memory, "trim_host_memory", lambda: True)
+    monkeypatch.setattr(
+        host_memory,
+        "_process_memory_snapshot",
+        lambda *, include_mapping_categories: next(snapshots),
+    )
+    monkeypatch.setattr(
+        host_memory,
+        "_live_python_stats",
+        lambda: {
+            "cpu_tensor_objects": 4,
+            "cpu_tensor_storage_bytes": 64 * 1024 * 1024,
+            "asyncio_tasks": 2,
+        },
+    )
+
+    with caplog.at_level("WARNING"):
+        assert host_memory.trim_and_log_host_memory("return_ready", 7, 32 * 1024 * 1024) is True
+
+    message = caplog.messages[-1]
+    assert host_memory._DEBUG_TAG in message
+    assert '"global_step": 7' in message
+    assert '"rss_before_mib": 200.0' in message
+    assert '"rss_after_mib": 150.0' in message
+    assert '"anon_private_dirty_mib": 100.0' in message
+    assert '"glibc_inuse_mib": 80.0' in message
+    assert '"cpu_tensor_storage_mib": 64.0' in message
+    assert '"payload_mib": 32.0' in message
