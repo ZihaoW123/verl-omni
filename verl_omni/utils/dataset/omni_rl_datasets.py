@@ -15,10 +15,30 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig
 from verl.utils.dataset.rl_dataset import RLHFDataset
+
+
+def _ensure_audioread_ffmpeg() -> None:
+    """Use imageio's bundled FFmpeg when no system decoder is available."""
+    from audioread import ffdec
+
+    if any(shutil.which(command) for command in ffdec.COMMANDS):
+        return
+
+    from imageio_ffmpeg import get_ffmpeg_exe
+
+    ffmpeg_exe = get_ffmpeg_exe()
+    if not Path(ffmpeg_exe).is_file():
+        raise RuntimeError(
+            "Audio extraction from video requires FFmpeg, but neither a system decoder nor imageio-ffmpeg's "
+            f"bundled executable is available (resolved path: {ffmpeg_exe!r})."
+        )
+    ffdec.COMMANDS = (ffmpeg_exe,)
 
 
 class QwenOmniRLHFDataset(RLHFDataset):
@@ -43,6 +63,8 @@ class QwenOmniRLHFDataset(RLHFDataset):
         # datasets such as OmniVideo-R1 can read the audio stream directly
         # from each video to avoid duplicating media on disk.
         use_audio_in_video = bool(config.get("use_audio_in_video", False))
+        if use_audio_in_video:
+            _ensure_audioread_ffmpeg()
         audios, images, videos = process_mm_info(
             messages,
             use_audio_in_video=use_audio_in_video,
