@@ -11,6 +11,9 @@
 #
 set -x
 
+export VERL_DATAPROTO_SERIALIZATION_METHOD=numpy
+export MALLOC_ARENA_MAX=2
+
 if npu-smi info &>/dev/null; then
     DEVICE="npu"
 elif nvidia-smi &>/dev/null; then
