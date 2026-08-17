@@ -70,8 +70,8 @@ class Qwen3OmniThinkerAdapter(OmniModelBase):
         Swaps ``processor.config`` to ``thinker_config`` (Qwen3-Omni nests
         multimodal settings under sub-configs). Binds ``get_rope_index`` and
         ``get_llm_pos_ids_for_vision`` (model methods the omni agent loop
-        calls on the processor), ``get_rope_index_kwargs`` (the upstream
-        extension point for audio/video RoPE inputs), and
+        calls on the processor), ``get_rope_index_kwargs`` (the audio/video
+        RoPE inputs consumed by the pinned verl compatibility bridge), and
         ``dedup_pad_tokens`` (collapses consecutive multimodal pad tokens
         before vLLM-Omni re-expands them).
 
@@ -83,9 +83,11 @@ class Qwen3OmniThinkerAdapter(OmniModelBase):
             The configured processor with RoPE and dedup helpers bound.
         """
         import types
+        from functools import partial
 
         from transformers import AutoConfig, AutoProcessor
         from transformers.models.qwen3_omni_moe import Qwen3OmniMoeThinkerForConditionalGeneration
+        from verl.trainer.ppo.v1.agent_loop_tq import AgentLoopWorkerTQ
 
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=model_config.trust_remote_code)
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=model_config.trust_remote_code)
@@ -119,6 +121,46 @@ class Qwen3OmniThinkerAdapter(OmniModelBase):
             return rope_kwargs
 
         processor.get_rope_index_kwargs = types.MethodType(_get_rope_index_kwargs, processor)
+
+        # verl@8a694930 predates the generic get_rope_index_kwargs hook. Keep
+        # the model-specific arguments on the processor, and bridge them into
+        # the pinned V1 worker without copying its position-ID implementation.
+        agent_loop_worker_cls = AgentLoopWorkerTQ.__ray_metadata__.modified_class
+        original_compute_position_ids = agent_loop_worker_cls._compute_position_ids
+        if not getattr(original_compute_position_ids, "_verl_qwen3_omni_rope_kwargs_bridge", False):
+
+            def _compute_position_ids_with_omni_rope(
+                self,
+                input_ids,
+                attention_mask,
+                multi_modal_inputs,
+                mm_processor_kwargs=None,
+            ):
+                rope_kwargs = self.processor.get_rope_index_kwargs(multi_modal_inputs)
+                if not rope_kwargs:
+                    return original_compute_position_ids(
+                        self,
+                        input_ids,
+                        attention_mask,
+                        multi_modal_inputs,
+                        mm_processor_kwargs,
+                    )
+
+                original_get_rope_index = self.processor.get_rope_index
+                self.processor.get_rope_index = partial(original_get_rope_index, **rope_kwargs)
+                try:
+                    return original_compute_position_ids(
+                        self,
+                        input_ids,
+                        attention_mask,
+                        multi_modal_inputs,
+                        mm_processor_kwargs,
+                    )
+                finally:
+                    self.processor.get_rope_index = original_get_rope_index
+
+            _compute_position_ids_with_omni_rope._verl_qwen3_omni_rope_kwargs_bridge = True
+            agent_loop_worker_cls._compute_position_ids = _compute_position_ids_with_omni_rope
 
         # Collapse consecutive multimodal pad tokens before vLLM-Omni re-expands
         # them (token-IDs path still unfixed: https://github.com/vllm-project/vllm/issues/33672);
