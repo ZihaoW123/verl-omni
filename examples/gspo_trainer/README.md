@@ -284,7 +284,7 @@ preserves its `RLHFDataset` base class, sets rollout NPU memory utilization to
 extracts the first `<answer>...</answer>` payload and returns a binary exact-match
 reward against the tagged dataset label.
 
-## OmniVideo-R1 query-intensive grounding
+## Training with `OmniVideo-R1`
 
 The QI recipe trains Qwen3-Omni on
 [`merged_train_all_qi.jsonl`](https://huggingface.co/datasets/jankin123/OmniVideo-R1/blob/main/merged_train_all_qi.jsonl)
@@ -331,6 +331,32 @@ an audio path map only when separately extracted audio files are preferred.
 Install `ffmpeg` on every training worker when extracting audio from video.
 `--max_samples 40 --val_size 8` is useful for a local smoke subset.
 
+To run a smaller but meaningful experiment with approximately 2,000 training
+rows and 512 validation rows, cap preprocessing at 2,512 valid rows and use 512
+as the validation target:
+
+```bash
+python examples/gspo_trainer/data_process/omnivideo_r1_qi.py \
+    --input /path/to/merged_train_all_qi.jsonl \
+    --output_dir ~/data/omnivideo_r1_qi_2k \
+    --path_map ./data/LLaVA-Video-178K=/shared/data/LLaVA-Video-178K \
+    --path_map ./data/VideoVista_Train=/shared/data/VideoVista_Train \
+    --max_samples 2512 \
+    --val_size 512 \
+    --seed 42
+```
+
+`--max_samples` counts valid rows after missing media and malformed records are
+dropped. The split is performed by video path to prevent train/validation media
+leakage, so a video with multiple annotations can make the validation split
+slightly larger than 512 and the training split correspondingly smaller than
+2,000. The converter prints the final `train_rows` and `validation_rows`; they
+can also be checked before training with:
+
+```bash
+python -c 'import pandas as pd; from pathlib import Path; p=Path.home()/"data/omnivideo_r1_qi_2k"; print({s: len(pd.read_parquet(p/f"{s}.parquet")) for s in ("train", "validation")})'
+```
+
 ### Start the QI judge and train on NPU
 
 The launcher deploys the resource-efficient default judge,
@@ -347,6 +373,17 @@ TRAIN_FILE=$HOME/data/omnivideo_r1_qi/train.parquet \
 VAL_FILE=$HOME/data/omnivideo_r1_qi/validation.parquet \
 MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
 bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_omnivideo_qi_v1.sh
+```
+
+For the 2k/512 subset above, point the launcher at the subset and override its
+default validation cap (256) so all 512 validation rows are evaluated:
+
+```bash
+TRAIN_FILE=$HOME/data/omnivideo_r1_qi_2k/train.parquet \
+VAL_FILE=$HOME/data/omnivideo_r1_qi_2k/validation.parquet \
+MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
+bash examples/gspo_trainer/qwen3_omni/run_qwen3_omni_thinker_gspo_npu_omnivideo_qi_v1.sh \
+    data.val_max_samples=512
 ```
 
 Set `REWARD_TP` and `REWARD_GPU_MEMORY_UTILIZATION` to tune the colocated
