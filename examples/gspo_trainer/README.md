@@ -434,7 +434,9 @@ supported: setting `OMNIVIDEO_QI_JUDGE_URL` disables the colocated server and
 routes QI judge requests to that OpenAI-compatible endpoint.
 
 QI segment decoding is limited to two concurrent jobs per reward worker to
-avoid exhausting FFmpeg/scaler threads. Set
+avoid exhausting FFmpeg/scaler threads. Each segment is decoded in a killable
+FFmpeg subprocess with a 30-second timeout, so malformed videos cannot stall a
+reward batch. Set `OMNIVIDEO_QI_DECODE_TIMEOUT` to adjust that limit, or set
 `OMNIVIDEO_QI_MAX_DECODE_CONCURRENCY=1` for containers with especially tight
 process or thread limits.
 

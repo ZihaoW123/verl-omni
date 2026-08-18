@@ -27,8 +27,12 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -232,35 +236,72 @@ def _sample_evenly(items: list[str], limit: int) -> list[str]:
     return [items[round(index * (len(items) - 1) / (limit - 1))] for index in range(limit)]
 
 
+def _ffmpeg_executable() -> str:
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+
+    from imageio_ffmpeg import get_ffmpeg_exe
+
+    bundled_ffmpeg = get_ffmpeg_exe()
+    if not Path(bundled_ffmpeg).is_file():
+        raise RuntimeError(f"FFmpeg executable is unavailable (resolved path: {bundled_ffmpeg!r})")
+    return bundled_ffmpeg
+
+
 def _load_segment_frames(video_path: str, pair: GroundingPair, max_frames: int) -> list[str]:
-    """Decode a bounded segment and return frame data URIs for the judge."""
-    import torch
+    """Decode a bounded segment in a killable process and return judge frames."""
     from PIL import Image
-    from qwen_vl_utils.vision_process import fetch_video
 
     from verl_omni.utils.reward_score.reward_utils import pil_image_to_base64
 
-    max_frames = max(2, max_frames - max_frames % 2)
-    video = fetch_video(
-        {
-            "video": video_path,
-            "video_start": pair.start,
-            "video_end": pair.end,
-            "fps": 1.0,
-            "min_frames": 2,
-            "max_frames": max_frames,
-        }
-    )
-    if isinstance(video, tuple):
-        video = video[0]
-    if not isinstance(video, torch.Tensor) or video.ndim != 4 or video.shape[1] != 3:
-        raise ValueError(f"Expected decoded video [T, 3, H, W], got {type(video).__name__}")
+    max_frames = max(1, max_frames)
+    timeout_seconds = max(1.0, float(os.getenv("OMNIVIDEO_QI_DECODE_TIMEOUT", "30")))
+    max_frame_side = max(28, int(os.getenv("OMNIVIDEO_QI_MAX_FRAME_SIDE", "768")))
+    source_path = video_path[7:] if video_path.startswith("file://") else video_path
+    duration = pair.end - pair.start
 
-    frames = video.detach().to(device="cpu", dtype=torch.float32)
-    if frames.numel() and frames.max().item() <= 1.0:
-        frames = frames * 255
-    frames = frames.round().clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1).contiguous().numpy()
-    return [pil_image_to_base64(Image.fromarray(frame)) for frame in frames]
+    with tempfile.TemporaryDirectory(prefix="omnivideo_qi_frames_") as temp_dir:
+        output_pattern = str(Path(temp_dir) / "%04d.png")
+        command = [
+            _ffmpeg_executable(),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-filter_threads",
+            "1",
+            "-threads",
+            "1",
+            "-ss",
+            f"{pair.start:.3f}",
+            "-t",
+            f"{duration:.3f}",
+            "-i",
+            source_path,
+            "-an",
+            "-sn",
+            "-dn",
+            "-vf",
+            "fps=1",
+            "-frames:v",
+            str(max_frames),
+            "-y",
+            output_pattern,
+        ]
+        subprocess.run(command, check=True, capture_output=True, timeout=timeout_seconds)
+
+        frame_paths = sorted(Path(temp_dir).glob("*.png"))
+        if not frame_paths:
+            raise ValueError(f"FFmpeg decoded no frames for segment {pair.start:.1f}-{pair.end:.1f}")
+
+        frames = []
+        for frame_path in frame_paths:
+            with Image.open(frame_path) as image:
+                image = image.convert("RGB")
+                image.thumbnail((max_frame_side, max_frame_side), Image.Resampling.LANCZOS)
+                frames.append(pil_image_to_base64(image))
+        return frames
 
 
 def _load_segment_frames_bounded(video_path: str, pair: GroundingPair, max_frames: int) -> list[str]:

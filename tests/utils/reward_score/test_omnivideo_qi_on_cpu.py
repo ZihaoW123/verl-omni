@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 
 def _load_reward_module():
@@ -73,6 +74,42 @@ def test_parse_response_accepts_strict_ordered_groundings():
 )
 def test_parse_response_rejects_non_strict_formats(response):
     assert not omnivideo_qi.parse_response(response).format_valid
+
+
+def test_segment_decode_uses_killable_ffmpeg_subprocess(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        output_path = Path(command[-1].replace("%04d", "0001"))
+        Image.new("RGB", (16, 12), color="red").save(output_path)
+
+    vision_process = SimpleNamespace(
+        fetch_video=lambda *args, **kwargs: pytest.fail("torchvision decoding cannot enforce a hard timeout")
+    )
+    monkeypatch.setitem(sys.modules, "qwen_vl_utils", SimpleNamespace(vision_process=vision_process))
+    monkeypatch.setitem(sys.modules, "qwen_vl_utils.vision_process", vision_process)
+    monkeypatch.setitem(
+        sys.modules,
+        "verl_omni.utils.reward_score.reward_utils",
+        SimpleNamespace(pil_image_to_base64=lambda image: f"data:image/png;base64,{image.size}"),
+    )
+    monkeypatch.setattr(omnivideo_qi, "_ffmpeg_executable", lambda: "/opt/ffmpeg", raising=False)
+    monkeypatch.setattr(omnivideo_qi, "subprocess", SimpleNamespace(run=fake_run), raising=False)
+    monkeypatch.setenv("OMNIVIDEO_QI_DECODE_TIMEOUT", "12.5")
+
+    frames = omnivideo_qi._load_segment_frames(
+        "/data/example.mp4",
+        omnivideo_qi.GroundingPair(1.0, 2.5, "caption"),
+        max_frames=8,
+    )
+
+    assert len(frames) == 1
+    command, kwargs = calls[0]
+    assert command[:2] == ["/opt/ffmpeg", "-hide_banner"]
+    assert command[command.index("-threads") + 1] == "1"
+    assert command[command.index("-frames:v") + 1] == "8"
+    assert kwargs["timeout"] == 12.5
 
 
 @pytest.mark.asyncio
