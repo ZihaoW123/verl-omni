@@ -18,7 +18,6 @@ import asyncio
 import ctypes
 import gc
 import json
-import logging
 import os
 import re
 import sys
@@ -31,8 +30,6 @@ _ENABLED_VALUES = {"1", "true", "yes", "on"}
 _DEBUG_TAG = "[DEBUG-A3-HOSTMEM]"
 _MAP_HEADER = re.compile(r"^[0-9a-f]+-[0-9a-f]+\s")
 _MIB = 1024 * 1024
-
-logger = logging.getLogger(__name__)
 
 
 class _Mallinfo2(ctypes.Structure):
@@ -252,5 +249,7 @@ def trim_and_log_host_memory(phase: str, global_step: object, payload_bytes: int
         else:
             record[key] = value
 
-    logger.warning("%s %s", _DEBUG_TAG, json.dumps(record, sort_keys=True))
+    # Ray's worker logging configuration can filter module loggers. stdout is
+    # captured reliably and flush=True preserves the step boundary ordering.
+    print(f"{_DEBUG_TAG} {json.dumps(record, sort_keys=True)}", flush=True)
     return trim_released

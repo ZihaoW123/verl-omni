@@ -41,7 +41,7 @@ def test_trim_host_memory_is_portable(monkeypatch):
     assert host_memory.trim_host_memory() is False
 
 
-def test_diagnostics_distinguish_python_glibc_and_anonymous_memory(monkeypatch, caplog):
+def test_diagnostics_distinguish_python_glibc_and_anonymous_memory(monkeypatch, capsys):
     snapshots = iter(
         [
             {"rss_kib": 200 * 1024, "private_dirty_kib": 180 * 1024},
@@ -71,10 +71,9 @@ def test_diagnostics_distinguish_python_glibc_and_anonymous_memory(monkeypatch, 
         },
     )
 
-    with caplog.at_level("WARNING"):
-        assert host_memory.trim_and_log_host_memory("return_ready", 7, 32 * 1024 * 1024) is True
+    assert host_memory.trim_and_log_host_memory("return_ready", 7, 32 * 1024 * 1024) is True
 
-    message = caplog.messages[-1]
+    message = capsys.readouterr().out
     assert host_memory._DEBUG_TAG in message
     assert '"global_step": 7' in message
     assert '"rss_before_mib": 200.0' in message

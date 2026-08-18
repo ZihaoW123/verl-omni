@@ -25,6 +25,10 @@ fi
 echo "Detected device: $DEVICE"
 
 if [ "$DEVICE" = "npu" ]; then
+    # Ray workers preload jemalloc on aarch64. Purge freed rollout buffers
+    # immediately instead of leaving tens of GiB per worker as LazyFree pages.
+    export MALLOC_CONF=${MALLOC_CONF:-background_thread:true,dirty_decay_ms:0,muzzy_decay_ms:0}
+
     # Diagnose A3 anonymous RSS growth and trim free glibc pages at diffusion
     # agent step boundaries. Disable diagnostics after the leak is identified.
     export VERL_OMNI_AGENT_MALLOC_TRIM=${VERL_OMNI_AGENT_MALLOC_TRIM:-1}
