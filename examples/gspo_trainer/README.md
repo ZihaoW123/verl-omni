@@ -438,7 +438,9 @@ avoid exhausting FFmpeg/scaler threads. Each segment is decoded in a killable
 FFmpeg subprocess with a 30-second timeout, so malformed videos cannot stall a
 reward batch. Set `OMNIVIDEO_QI_DECODE_TIMEOUT` to adjust that limit, or set
 `OMNIVIDEO_QI_MAX_DECODE_CONCURRENCY=1` for containers with especially tight
-process or thread limits.
+process or thread limits. Sub-second groundings sample their midpoint directly
+so they still provide one judge frame. QI judge requests time out after 60
+seconds by default; set `OMNIVIDEO_QI_JUDGE_TIMEOUT` to override that bound.
 
 Policy input videos with `use_audio_in_video=true` are also decoded through
 killable FFmpeg subprocesses instead of the uninterruptible torchvision video

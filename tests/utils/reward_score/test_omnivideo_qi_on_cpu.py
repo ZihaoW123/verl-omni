@@ -112,6 +112,30 @@ def test_segment_decode_uses_killable_ffmpeg_subprocess(monkeypatch, tmp_path):
     assert kwargs["timeout"] == 12.5
 
 
+def test_short_segment_decode_samples_a_midpoint_frame(monkeypatch):
+    def fake_run(command, **kwargs):
+        del kwargs
+        if "-t" not in command:
+            output_path = Path(command[-1].replace("%04d", "0001"))
+            Image.new("RGB", (16, 12), color="red").save(output_path)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "verl_omni.utils.reward_score.reward_utils",
+        SimpleNamespace(pil_image_to_base64=lambda image: f"data:image/png;base64,{image.size}"),
+    )
+    monkeypatch.setattr(omnivideo_qi, "_ffmpeg_executable", lambda: "/opt/ffmpeg")
+    monkeypatch.setattr(omnivideo_qi.subprocess, "run", fake_run)
+
+    frames = omnivideo_qi._load_segment_frames(
+        "/data/example.mp4",
+        omnivideo_qi.GroundingPair(0.0, 0.1, "caption"),
+        max_frames=8,
+    )
+
+    assert len(frames) == 1
+
+
 @pytest.mark.asyncio
 async def test_choice_answer_still_receives_outcome_reward_without_valid_grounding(monkeypatch):
     monkeypatch.delenv("OMNIVIDEO_QI_JUDGE_URL", raising=False)
@@ -223,6 +247,15 @@ def test_judge_config_uses_resource_efficient_default(monkeypatch):
     config = omnivideo_qi._judge_config()
 
     assert config.model == "Qwen/Qwen3-VL-8B-Instruct"
+
+
+def test_judge_config_uses_bounded_default_timeout(monkeypatch):
+    monkeypatch.setenv("OMNIVIDEO_QI_JUDGE_URL", "http://judge:8000/v1")
+    monkeypatch.delenv("OMNIVIDEO_QI_JUDGE_TIMEOUT", raising=False)
+
+    config = omnivideo_qi._judge_config()
+
+    assert config.timeout_seconds == 60.0
 
 
 def test_judge_config_uses_colocated_reward_router(monkeypatch):

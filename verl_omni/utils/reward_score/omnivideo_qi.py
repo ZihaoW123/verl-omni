@@ -118,7 +118,7 @@ class ParsedResponse:
 class JudgeConfig:
     url: str
     model: str
-    timeout_seconds: float = 300.0
+    timeout_seconds: float = 60.0
     max_frames_per_segment: int = 8
     max_completeness_frames: int = 32
 
@@ -177,7 +177,7 @@ def _judge_config(reward_router_address: str | None = None, reward_model_tokeniz
     return JudgeConfig(
         url=url,
         model=model,
-        timeout_seconds=float(os.getenv("OMNIVIDEO_QI_JUDGE_TIMEOUT", "300")),
+        timeout_seconds=float(os.getenv("OMNIVIDEO_QI_JUDGE_TIMEOUT", "60")),
         max_frames_per_segment=int(os.getenv("OMNIVIDEO_QI_MAX_FRAMES_PER_SEGMENT", "8")),
         max_completeness_frames=int(os.getenv("OMNIVIDEO_QI_MAX_COMPLETENESS_FRAMES", "32")),
     )
@@ -260,6 +260,8 @@ def _load_segment_frames(video_path: str, pair: GroundingPair, max_frames: int) 
     max_frame_side = max(28, int(os.getenv("OMNIVIDEO_QI_MAX_FRAME_SIDE", "768")))
     source_path = video_path[7:] if video_path.startswith("file://") else video_path
     duration = pair.end - pair.start
+    is_short_segment = duration < 1.0
+    seek_time = pair.start + duration / 2 if is_short_segment else pair.start
 
     with tempfile.TemporaryDirectory(prefix="omnivideo_qi_frames_") as temp_dir:
         output_pattern = str(Path(temp_dir) / "%04d.png")
@@ -274,21 +276,29 @@ def _load_segment_frames(video_path: str, pair: GroundingPair, max_frames: int) 
             "-threads",
             "1",
             "-ss",
-            f"{pair.start:.3f}",
-            "-t",
-            f"{duration:.3f}",
-            "-i",
-            source_path,
-            "-an",
-            "-sn",
-            "-dn",
-            "-vf",
-            "fps=1",
-            "-frames:v",
-            str(max_frames),
-            "-y",
-            output_pattern,
+            f"{seek_time:.3f}",
         ]
+        if not is_short_segment:
+            command.extend(["-t", f"{duration:.3f}"])
+        command.extend(
+            [
+                "-i",
+                source_path,
+                "-an",
+                "-sn",
+                "-dn",
+            ]
+        )
+        if not is_short_segment:
+            command.extend(["-vf", "fps=1"])
+        command.extend(
+            [
+                "-frames:v",
+                "1" if is_short_segment else str(max_frames),
+                "-y",
+                output_pattern,
+            ]
+        )
         subprocess.run(command, check=True, capture_output=True, timeout=timeout_seconds)
 
         frame_paths = sorted(Path(temp_dir).glob("*.png"))
