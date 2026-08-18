@@ -16,11 +16,13 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,8 @@ from omegaconf import DictConfig
 from verl.utils.dataset.rl_dataset import RLHFDataset
 
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):([\d.]+)")
+_MEDIA_CACHE_SIZE = max(0, int(os.getenv("OMNIVIDEO_INPUT_CACHE_SIZE", "8")))
+_MEDIA_KEYS = {"audio", "audio_url", "image", "image_url", "video", "video_url"}
 
 
 def _ffmpeg_executable() -> str:
@@ -189,6 +193,23 @@ def _process_audio_video_with_ffmpeg(messages: list[dict], image_patch_size: int
     return audios or None, images, videos
 
 
+def _serialize_media_messages(messages: list[dict]) -> str:
+    media_messages = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        media_content = [item for item in content if isinstance(item, dict) and (_MEDIA_KEYS & item.keys())]
+        if media_content:
+            media_messages.append({"role": message.get("role", "user"), "content": media_content})
+    return json.dumps(media_messages, sort_keys=True, separators=(",", ":"), default=str)
+
+
+@lru_cache(maxsize=_MEDIA_CACHE_SIZE)
+def _process_audio_video_cached(serialized_messages: str, image_patch_size: int):
+    return _process_audio_video_with_ffmpeg(json.loads(serialized_messages), image_patch_size)
+
+
 class QwenOmniRLHFDataset(RLHFDataset):
     """Adapt Qwen's multimodal media loader to verl's RL dataset interface.
 
@@ -212,7 +233,7 @@ class QwenOmniRLHFDataset(RLHFDataset):
         # from each video to avoid duplicating media on disk.
         use_audio_in_video = bool(config.get("use_audio_in_video", False))
         if use_audio_in_video:
-            audios, images, videos = _process_audio_video_with_ffmpeg(messages, image_patch_size)
+            audios, images, videos = _process_audio_video_cached(_serialize_media_messages(messages), image_patch_size)
         else:
             audios, images, videos = process_mm_info(
                 messages,

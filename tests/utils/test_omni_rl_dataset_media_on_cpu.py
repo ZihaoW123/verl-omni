@@ -153,6 +153,39 @@ def test_audio_video_loader_preserves_file_video_semantics_for_vllm(monkeypatch)
     assert audios[0].shape == (16,)
 
 
+def test_audio_video_loader_reuses_media_for_repeated_rollouts(monkeypatch):
+    module = _load_dataset_module(monkeypatch)
+    materialize_calls = 0
+    qwen_calls = 0
+
+    def fake_materialize(*args):
+        nonlocal materialize_calls
+        materialize_calls += 1
+        return "/tmp/normalized.mp4", "audio-array"
+
+    def fake_process_mm_info(messages, **kwargs):
+        nonlocal qwen_calls
+        qwen_calls += 1
+        return None, None, [messages[0]["content"][0]["video"]]
+
+    monkeypatch.setattr(module, "_materialize_video_item", fake_materialize)
+    monkeypatch.setitem(sys.modules, "qwen_omni_utils", SimpleNamespace(process_mm_info=fake_process_mm_info))
+    messages = [{"role": "user", "content": [{"type": "video", "video": "/data/sample.mp4", "max_frames": 64}]}]
+
+    results = [
+        module.QwenOmniRLHFDataset._process_multi_modal_info(
+            messages,
+            image_patch_size=16,
+            config={"use_audio_in_video": True},
+        )
+        for _ in range(8)
+    ]
+
+    assert all(result == results[0] for result in results)
+    assert materialize_calls == 1
+    assert qwen_calls == 1
+
+
 def test_audio_video_materialization_bounds_ffmpeg_runtime(monkeypatch, tmp_path):
     module = _load_dataset_module(monkeypatch)
     calls = []

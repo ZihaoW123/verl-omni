@@ -448,6 +448,10 @@ reader. FFmpeg writes a bounded, normalized MP4 before Qwen preprocessing so
 the client processor and vLLM-Omni keep the same file-video token semantics.
 `OMNIVIDEO_INPUT_DECODE_TIMEOUT` controls the per-stage timeout for duration
 probing, video normalization, and audio extraction (60 seconds by default).
+Each agent-loop worker caches the eight most recent processed media inputs so
+the eight GSPO rollouts do not repeatedly decode the same video. Set
+`OMNIVIDEO_INPUT_CACHE_SIZE=0` to disable this cache or lower it if host memory
+is constrained.
 
 The recipe follows the paper's GSPO settings: eight rollouts, learning rate
 `1e-6`, clip bounds `3e-4`/`4e-4`, KL coefficient `0.03`, 5% warmup, maximum
