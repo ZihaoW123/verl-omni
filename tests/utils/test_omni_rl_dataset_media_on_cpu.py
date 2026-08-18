@@ -88,7 +88,7 @@ def test_audio_video_loader_materializes_media_before_qwen_processing(monkeypatc
 
     def fake_process_mm_info(messages, **kwargs):
         calls.append((messages, kwargs))
-        assert messages[0]["content"][0]["video"] == ["file:///tmp/frame-1.png", "file:///tmp/frame-2.png"]
+        assert messages[0]["content"][0]["video"] == "/tmp/normalized.mp4"
         return None, None, [["frame-1", "frame-2"]]
 
     qwen_omni_utils = SimpleNamespace(process_mm_info=fake_process_mm_info)
@@ -96,7 +96,7 @@ def test_audio_video_loader_materializes_media_before_qwen_processing(monkeypatc
     monkeypatch.setattr(
         module,
         "_materialize_video_item",
-        lambda *args: (["file:///tmp/frame-1.png", "file:///tmp/frame-2.png"], "audio-array"),
+        lambda *args: ("/tmp/normalized.mp4", "audio-array"),
         raising=False,
     )
 
@@ -110,6 +110,49 @@ def test_audio_video_loader_materializes_media_before_qwen_processing(monkeypatc
     assert calls[0][1] == {"use_audio_in_video": False, "image_patch_size": 16}
 
 
+def test_audio_video_loader_preserves_file_video_semantics_for_vllm(monkeypatch):
+    module = _load_dataset_module(monkeypatch)
+
+    def fake_run(command, **kwargs):
+        if kwargs.get("text"):
+            return SimpleNamespace(stderr="Duration: 00:00:08.00, start: 0.000000")
+        if command[-1] == "pipe:1":
+            return SimpleNamespace(stdout=b"\x00\x00\x00\x00" * 16)
+        output_path = command[-1]
+        if "%04d" in output_path:
+            for index in range(1, 5):
+                Path(output_path.replace("%04d", f"{index:04d}")).write_bytes(b"frame")
+        else:
+            Path(output_path).write_bytes(b"video")
+        return SimpleNamespace(stdout=b"")
+
+    def fake_process_mm_info(messages, **kwargs):
+        video = messages[0]["content"][0]["video"]
+        if isinstance(video, list):
+            raise RuntimeError(
+                "shape mismatch: value tensor of shape [4403, 2048] cannot be broadcast "
+                "to indexing result of shape [7578, 2048]"
+            )
+        assert video.endswith(".mp4")
+        return None, None, ["video"]
+
+    monkeypatch.setattr(module, "_ffmpeg_executable", lambda: "/opt/ffmpeg")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setitem(sys.modules, "qwen_omni_utils", SimpleNamespace(process_mm_info=fake_process_mm_info))
+
+    result = module.QwenOmniRLHFDataset._process_multi_modal_info(
+        [{"role": "user", "content": [{"type": "video", "video": "/data/sample.mp4", "max_frames": 64}]}],
+        image_patch_size=16,
+        config={"use_audio_in_video": True},
+    )
+
+    images, videos, audios = result
+    assert images is None
+    assert videos == ["video"]
+    assert len(audios) == 1
+    assert audios[0].shape == (16,)
+
+
 def test_audio_video_materialization_bounds_ffmpeg_runtime(monkeypatch, tmp_path):
     module = _load_dataset_module(monkeypatch)
     calls = []
@@ -120,24 +163,22 @@ def test_audio_video_materialization_bounds_ffmpeg_runtime(monkeypatch, tmp_path
             return SimpleNamespace(stderr="Duration: 00:01:00.00, start: 0.000000")
         if command[-1] == "pipe:1":
             return SimpleNamespace(stdout=b"\x00\x00\x00\x00" * 16)
-        output_pattern = command[-1]
-        for index in range(1, 5):
-            Path(output_pattern.replace("%04d", f"{index:04d}")).write_bytes(b"frame")
+        Path(command[-1]).write_bytes(b"video")
         return SimpleNamespace(stdout=b"")
 
     monkeypatch.setattr(module, "_ffmpeg_executable", lambda: "/opt/ffmpeg")
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     monkeypatch.setenv("OMNIVIDEO_INPUT_DECODE_TIMEOUT", "7.5")
 
-    frames, audio = module._materialize_video_item(
+    video, audio = module._materialize_video_item(
         {"type": "video", "video": "/data/sample.mp4", "fps": 2.0, "min_frames": 4, "max_frames": 64},
         str(tmp_path),
         0,
     )
 
-    frame_command = calls[1][0]
-    assert frame_command[frame_command.index("-frames:v") + 1] == "64"
-    assert frame_command[frame_command.index("-vf") + 1] == "fps=1.06666667"
+    video_command = calls[1][0]
+    assert video_command[video_command.index("-frames:v") + 1] == "64"
+    assert video_command[video_command.index("-vf") + 1].startswith("fps=1.06666667,")
     assert [kwargs["timeout"] for _, kwargs in calls] == [7.5, 7.5, 7.5]
-    assert len(frames) == 4
+    assert video == str((tmp_path / "video_0000.mp4").resolve())
     assert audio.shape == (16,)

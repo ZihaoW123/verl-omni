@@ -442,8 +442,10 @@ process or thread limits.
 
 Policy input videos with `use_audio_in_video=true` are also decoded through
 killable FFmpeg subprocesses instead of the uninterruptible torchvision video
-reader. `OMNIVIDEO_INPUT_DECODE_TIMEOUT` controls the per-stage timeout for
-duration probing, frame sampling, and audio extraction (60 seconds by default).
+reader. FFmpeg writes a bounded, normalized MP4 before Qwen preprocessing so
+the client processor and vLLM-Omni keep the same file-video token semantics.
+`OMNIVIDEO_INPUT_DECODE_TIMEOUT` controls the per-stage timeout for duration
+probing, video normalization, and audio extraction (60 seconds by default).
 
 The recipe follows the paper's GSPO settings: eight rollouts, learning rate
 `1e-6`, clip bounds `3e-4`/`4e-4`, KL coefficient `0.03`, 5% warmup, maximum

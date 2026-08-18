@@ -98,7 +98,7 @@ def _decode_audio(ffmpeg: str, source_path: str, start: float, duration: float, 
     return audio
 
 
-def _materialize_video_item(item: dict, temp_dir: str, index: int) -> tuple[list[str], Any]:
+def _materialize_video_item(item: dict, temp_dir: str, index: int) -> tuple[str, Any]:
     source = item.get("video", item.get("video_url"))
     if not isinstance(source, str):
         raise TypeError(f"Expected a video path, got {type(source).__name__}")
@@ -120,10 +120,8 @@ def _materialize_video_item(item: dict, temp_dir: str, index: int) -> tuple[list
     target_frames = max(2, target_frames)
     sampling_fps = target_frames / duration
 
-    frame_dir = Path(temp_dir) / f"video_{index:04d}"
-    frame_dir.mkdir(parents=True)
-    output_pattern = str(frame_dir / "%04d.jpg")
-    frame_command = [
+    output_path = Path(temp_dir) / f"video_{index:04d}.mp4"
+    video_command = [
         ffmpeg,
         "-hide_banner",
         "-loglevel",
@@ -143,25 +141,22 @@ def _materialize_video_item(item: dict, temp_dir: str, index: int) -> tuple[list
         "-sn",
         "-dn",
         "-vf",
-        f"fps={sampling_fps:.8f}",
+        f"fps={sampling_fps:.8f},scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-frames:v",
         str(target_frames),
+        "-c:v",
+        "mpeg4",
         "-q:v",
         "3",
         "-y",
-        output_pattern,
+        str(output_path),
     ]
-    subprocess.run(frame_command, check=True, capture_output=True, timeout=timeout)
-    frame_paths = sorted(frame_dir.glob("*.jpg"))
-    if not frame_paths:
-        raise ValueError(f"FFmpeg decoded no frames from {source_path}")
-    while len(frame_paths) < min_frames:
-        frame_paths.append(frame_paths[-1])
-    if len(frame_paths) % 2:
-        frame_paths.append(frame_paths[-1])
+    subprocess.run(video_command, check=True, capture_output=True, timeout=timeout)
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise ValueError(f"FFmpeg decoded no video from {source_path}")
 
     audio = _decode_audio(ffmpeg, source_path, start, duration, timeout)
-    return [frame.resolve().as_uri() for frame in frame_paths], audio
+    return str(output_path.resolve()), audio
 
 
 def _process_audio_video_with_ffmpeg(messages: list[dict], image_patch_size: int):
@@ -178,10 +173,12 @@ def _process_audio_video_with_ffmpeg(messages: list[dict], image_patch_size: int
             for item in content:
                 if not isinstance(item, dict) or item.get("type") != "video":
                     continue
-                frame_paths, audio = _materialize_video_item(item, temp_dir, video_index)
+                normalized_video, audio = _materialize_video_item(item, temp_dir, video_index)
                 video_index += 1
-                item["video"] = frame_paths
+                item["video"] = normalized_video
                 item.pop("video_url", None)
+                item.pop("video_start", None)
+                item.pop("video_end", None)
                 audios.append(audio)
 
         _, images, videos = process_mm_info(
