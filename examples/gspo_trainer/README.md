@@ -400,14 +400,14 @@ python -c 'import pandas as pd; from pathlib import Path; p=Path.home()/"data/om
 ### Start the QI judge and train on NPU
 
 The launcher deploys the resource-efficient default judge,
-`Qwen/Qwen3-VL-30B-A3B-Instruct`, through verl's reward-model router on the
+`Qwen/Qwen3-VL-8B-Instruct`, through verl's reward-model router on the
 same NPU resource pool as training. Actor rollout and reward inference are
 time-multiplexed: the actor rollout sleeps while the reward model is awake,
 and the reward model releases its cache before actor work resumes. The default
 16-card topology uses reward TP 8 and two replicas.
 
 ```bash
-export OMNIVIDEO_QI_JUDGE_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct
+export OMNIVIDEO_QI_JUDGE_MODEL=Qwen/Qwen3-VL-8B-Instruct
 
 TRAIN_FILE=$HOME/data/omnivideo_r1_qi/train.parquet \
 VAL_FILE=$HOME/data/omnivideo_r1_qi/validation.parquet \
@@ -432,6 +432,11 @@ deployment. To reproduce the paper's judge choice, set
 `REWARD_TP` as capacity requires. An existing external service remains
 supported: setting `OMNIVIDEO_QI_JUDGE_URL` disables the colocated server and
 routes QI judge requests to that OpenAI-compatible endpoint.
+
+QI segment decoding is limited to two concurrent jobs per reward worker to
+avoid exhausting FFmpeg/scaler threads. Set
+`OMNIVIDEO_QI_MAX_DECODE_CONCURRENCY=1` for containers with especially tight
+process or thread limits.
 
 The recipe follows the paper's GSPO settings: eight rollouts, learning rate
 `1e-6`, clip bounds `3e-4`/`4e-4`, KL coefficient `0.03`, 5% warmup, maximum

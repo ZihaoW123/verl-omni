@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +35,9 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_JUDGE_MODEL = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+DEFAULT_JUDGE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
+_MAX_CONCURRENT_SEGMENT_DECODES = max(1, int(os.getenv("OMNIVIDEO_QI_MAX_DECODE_CONCURRENCY", "2")))
+_SEGMENT_DECODE_SEMAPHORE = threading.BoundedSemaphore(_MAX_CONCURRENT_SEGMENT_DECODES)
 _PAIR_SOURCE = (
     r"<time>(?P<start>\d+\.\d)-(?P<end>\d+\.\d)</time>"
     r"<caption>(?P<caption>.*?)</caption>"
@@ -260,6 +263,12 @@ def _load_segment_frames(video_path: str, pair: GroundingPair, max_frames: int) 
     return [pil_image_to_base64(Image.fromarray(frame)) for frame in frames]
 
 
+def _load_segment_frames_bounded(video_path: str, pair: GroundingPair, max_frames: int) -> list[str]:
+    """Limit concurrent FFmpeg/scaler use within each reward worker."""
+    with _SEGMENT_DECODE_SEMAPHORE:
+        return _load_segment_frames(video_path, pair, max_frames)
+
+
 def _frame_content(frames: list[str], text: str) -> list[dict[str, Any]]:
     return [
         *[{"type": "image_url", "image_url": {"url": frame}} for frame in frames],
@@ -337,7 +346,7 @@ async def compute_score(
         frame_results = await asyncio.gather(
             *[
                 asyncio.to_thread(
-                    _load_segment_frames,
+                    _load_segment_frames_bounded,
                     str(extra_info.get("video_path") or ""),
                     pair,
                     config.max_frames_per_segment,

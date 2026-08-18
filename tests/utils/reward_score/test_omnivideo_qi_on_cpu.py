@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import importlib.util
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -122,6 +125,50 @@ async def test_compute_score_implements_qi_equation(monkeypatch):
     assert result["score"] == pytest.approx(2.7)
 
 
+@pytest.mark.asyncio
+async def test_compute_score_bounds_concurrent_video_decodes_per_worker(monkeypatch):
+    config = omnivideo_qi.JudgeConfig(url="http://judge/v1/chat/completions", model="judge")
+    monkeypatch.setattr(omnivideo_qi, "_judge_config", lambda *args: config)
+    monkeypatch.setattr(
+        omnivideo_qi,
+        "_SEGMENT_DECODE_SEMAPHORE",
+        threading.BoundedSemaphore(2),
+        raising=False,
+    )
+    lock = threading.Lock()
+    active_decodes = 0
+    peak_decodes = 0
+
+    def fake_load_segment_frames(*args):
+        nonlocal active_decodes, peak_decodes
+        with lock:
+            active_decodes += 1
+            peak_decodes = max(peak_decodes, active_decodes)
+        time.sleep(0.02)
+        with lock:
+            active_decodes -= 1
+        return ["data:image/png;base64,frame"]
+
+    async def fake_chat_complete(*args):
+        return 1.0, "ok"
+
+    monkeypatch.setattr(omnivideo_qi, "_load_segment_frames", fake_load_segment_frames)
+    monkeypatch.setattr(omnivideo_qi, "_chat_complete", fake_chat_complete)
+
+    await asyncio.gather(
+        *[
+            omnivideo_qi.compute_score(
+                solution_str=VALID_RESPONSE,
+                ground_truth="B. entering the room",
+                extra_info={"is_multiple_choice": True, "video_path": f"/data/video-{index}.mp4"},
+            )
+            for index in range(4)
+        ]
+    )
+
+    assert peak_decodes == 2
+
+
 def test_judge_config_normalizes_openai_base_url(monkeypatch):
     monkeypatch.setenv("OMNIVIDEO_QI_JUDGE_URL", "http://judge:8000/v1")
     monkeypatch.setenv("OMNIVIDEO_QI_JUDGE_MODEL", "local-judge")
@@ -138,7 +185,7 @@ def test_judge_config_uses_resource_efficient_default(monkeypatch):
 
     config = omnivideo_qi._judge_config()
 
-    assert config.model == "Qwen/Qwen3-VL-30B-A3B-Instruct"
+    assert config.model == "Qwen/Qwen3-VL-8B-Instruct"
 
 
 def test_judge_config_uses_colocated_reward_router(monkeypatch):
