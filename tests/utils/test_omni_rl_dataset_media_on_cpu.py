@@ -18,8 +18,6 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 
 def _load_dataset_module(monkeypatch):
     rl_dataset = types.ModuleType("verl.utils.dataset.rl_dataset")
@@ -38,14 +36,9 @@ def _load_dataset_module(monkeypatch):
     return module
 
 
-@pytest.mark.parametrize(
-    ("config", "expected_audio_from_video"),
-    [({}, False), ({"use_audio_in_video": True}, True)],
-)
-def test_qwen_media_loader_forwards_audio_mode_and_patch_size(monkeypatch, config, expected_audio_from_video):
+def test_qwen_media_loader_forwards_patch_size_without_video_audio(monkeypatch):
     module = _load_dataset_module(monkeypatch)
     calls = []
-    decoder_checks = []
     expected_audios = [object()]
     expected_images = [object()]
     expected_videos = [object()]
@@ -54,55 +47,97 @@ def test_qwen_media_loader_forwards_audio_mode_and_patch_size(monkeypatch, confi
         calls.append((messages, kwargs))
         return expected_audios, expected_images, expected_videos
 
-    monkeypatch.setattr(module, "_ensure_audioread_ffmpeg", lambda: decoder_checks.append(True))
     monkeypatch.setitem(sys.modules, "qwen_omni_utils", SimpleNamespace(process_mm_info=fake_process_mm_info))
     messages = [{"role": "user", "content": [{"type": "video", "video": "/data/sample.mp4"}]}]
 
     result = module.QwenOmniRLHFDataset._process_multi_modal_info(
         messages,
         image_patch_size=16,
-        config=config,
+        config={},
     )
 
     assert result == (expected_images, expected_videos, expected_audios)
-    assert decoder_checks == ([True] if expected_audio_from_video else [])
     assert calls == [
         (
             messages,
             {
-                "use_audio_in_video": expected_audio_from_video,
+                "use_audio_in_video": False,
                 "image_patch_size": 16,
             },
         )
     ]
 
 
-def test_qwen_media_loader_uses_bundled_ffmpeg_for_video_audio(monkeypatch, tmp_path):
+def test_qwen_media_loader_resolves_bundled_ffmpeg(monkeypatch, tmp_path):
     module = _load_dataset_module(monkeypatch)
     bundled_ffmpeg = tmp_path / "imageio_ffmpeg"
     bundled_ffmpeg.write_text("", encoding="utf-8")
     bundled_ffmpeg.chmod(0o755)
 
-    ffdec = SimpleNamespace(COMMANDS=("ffmpeg", "avconv"))
-    audioread = types.ModuleType("audioread")
-    audioread.ffdec = ffdec
     imageio_ffmpeg = types.ModuleType("imageio_ffmpeg")
     imageio_ffmpeg.get_ffmpeg_exe = lambda: str(bundled_ffmpeg)
-    monkeypatch.setitem(sys.modules, "audioread", audioread)
-    monkeypatch.setitem(sys.modules, "audioread.ffdec", ffdec)
     monkeypatch.setitem(sys.modules, "imageio_ffmpeg", imageio_ffmpeg)
     monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
 
-    def fake_process_mm_info(messages, **kwargs):
-        assert ffdec.COMMANDS == (str(bundled_ffmpeg),)
-        return ["audio"], None, ["video"]
+    assert module._ffmpeg_executable() == str(bundled_ffmpeg)
 
-    monkeypatch.setitem(sys.modules, "qwen_omni_utils", SimpleNamespace(process_mm_info=fake_process_mm_info))
+
+def test_audio_video_loader_materializes_media_before_qwen_processing(monkeypatch):
+    module = _load_dataset_module(monkeypatch)
+    calls = []
+
+    def fake_process_mm_info(messages, **kwargs):
+        calls.append((messages, kwargs))
+        assert messages[0]["content"][0]["video"] == ["file:///tmp/frame-1.png", "file:///tmp/frame-2.png"]
+        return None, None, [["frame-1", "frame-2"]]
+
+    qwen_omni_utils = SimpleNamespace(process_mm_info=fake_process_mm_info)
+    monkeypatch.setitem(sys.modules, "qwen_omni_utils", qwen_omni_utils)
+    monkeypatch.setattr(
+        module,
+        "_materialize_video_item",
+        lambda *args: (["file:///tmp/frame-1.png", "file:///tmp/frame-2.png"], "audio-array"),
+        raising=False,
+    )
 
     result = module.QwenOmniRLHFDataset._process_multi_modal_info(
-        [{"role": "user", "content": [{"type": "video", "video": "/data/sample.mp4"}]}],
+        [{"role": "user", "content": [{"type": "video", "video": "/data/sample.mp4", "max_frames": 64}]}],
         image_patch_size=16,
         config={"use_audio_in_video": True},
     )
 
-    assert result == (None, ["video"], ["audio"])
+    assert result == (None, [["frame-1", "frame-2"]], ["audio-array"])
+    assert calls[0][1] == {"use_audio_in_video": False, "image_patch_size": 16}
+
+
+def test_audio_video_materialization_bounds_ffmpeg_runtime(monkeypatch, tmp_path):
+    module = _load_dataset_module(monkeypatch)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if kwargs.get("text"):
+            return SimpleNamespace(stderr="Duration: 00:01:00.00, start: 0.000000")
+        if command[-1] == "pipe:1":
+            return SimpleNamespace(stdout=b"\x00\x00\x00\x00" * 16)
+        output_pattern = command[-1]
+        for index in range(1, 5):
+            Path(output_pattern.replace("%04d", f"{index:04d}")).write_bytes(b"frame")
+        return SimpleNamespace(stdout=b"")
+
+    monkeypatch.setattr(module, "_ffmpeg_executable", lambda: "/opt/ffmpeg")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setenv("OMNIVIDEO_INPUT_DECODE_TIMEOUT", "7.5")
+
+    frames, audio = module._materialize_video_item(
+        {"type": "video", "video": "/data/sample.mp4", "fps": 2.0, "min_frames": 4, "max_frames": 64},
+        str(tmp_path),
+        0,
+    )
+
+    frame_command = calls[1][0]
+    assert frame_command[frame_command.index("-frames:v") + 1] == "64"
+    assert frame_command[frame_command.index("-vf") + 1] == "fps=1.06666667"
+    assert [kwargs["timeout"] for _, kwargs in calls] == [7.5, 7.5, 7.5]
+    assert len(frames) == 4
+    assert audio.shape == (16,)

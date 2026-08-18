@@ -15,30 +15,181 @@
 
 from __future__ import annotations
 
+import copy
+import os
+import re
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig
 from verl.utils.dataset.rl_dataset import RLHFDataset
 
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):([\d.]+)")
 
-def _ensure_audioread_ffmpeg() -> None:
-    """Use imageio's bundled FFmpeg when no system decoder is available."""
-    from audioread import ffdec
 
-    if any(shutil.which(command) for command in ffdec.COMMANDS):
-        return
+def _ffmpeg_executable() -> str:
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
 
     from imageio_ffmpeg import get_ffmpeg_exe
 
-    ffmpeg_exe = get_ffmpeg_exe()
-    if not Path(ffmpeg_exe).is_file():
-        raise RuntimeError(
-            "Audio extraction from video requires FFmpeg, but neither a system decoder nor imageio-ffmpeg's "
-            f"bundled executable is available (resolved path: {ffmpeg_exe!r})."
+    bundled_ffmpeg = get_ffmpeg_exe()
+    if not Path(bundled_ffmpeg).is_file():
+        raise RuntimeError(f"FFmpeg executable is unavailable (resolved path: {bundled_ffmpeg!r})")
+    return bundled_ffmpeg
+
+
+def _media_decode_timeout() -> float:
+    return max(1.0, float(os.getenv("OMNIVIDEO_INPUT_DECODE_TIMEOUT", "60")))
+
+
+def _probe_video_duration(ffmpeg: str, source_path: str, timeout: float) -> float:
+    result = subprocess.run(
+        [ffmpeg, "-hide_banner", "-i", source_path],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=min(timeout, 15.0),
+    )
+    match = _DURATION_RE.search(result.stderr or "")
+    if match is None:
+        raise ValueError(f"Unable to determine video duration for {source_path}")
+    hours, minutes, seconds = match.groups()
+    duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    if duration <= 0:
+        raise ValueError(f"Invalid video duration {duration} for {source_path}")
+    return duration
+
+
+def _decode_audio(ffmpeg: str, source_path: str, start: float, duration: float, timeout: float):
+    import numpy as np
+
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-threads",
+        "1",
+        "-ss",
+        f"{start:.3f}",
+        "-t",
+        f"{duration:.3f}",
+        "-i",
+        source_path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-f",
+        "f32le",
+        "pipe:1",
+    ]
+    result = subprocess.run(command, check=True, capture_output=True, timeout=timeout)
+    audio = np.frombuffer(result.stdout, dtype="<f4").copy()
+    if not audio.size:
+        raise ValueError(f"FFmpeg decoded no audio from {source_path}")
+    return audio
+
+
+def _materialize_video_item(item: dict, temp_dir: str, index: int) -> tuple[list[str], Any]:
+    source = item.get("video", item.get("video_url"))
+    if not isinstance(source, str):
+        raise TypeError(f"Expected a video path, got {type(source).__name__}")
+    source_path = source[7:] if source.startswith("file://") else source
+    ffmpeg = _ffmpeg_executable()
+    timeout = _media_decode_timeout()
+    full_duration = _probe_video_duration(ffmpeg, source_path, timeout)
+    start = max(0.0, float(item.get("video_start", 0.0)))
+    end = min(full_duration, float(item.get("video_end", full_duration)))
+    duration = end - start
+    if duration <= 0:
+        raise ValueError(f"Invalid video range {start}-{end} for {source_path}")
+
+    min_frames = max(2, int(item.get("min_frames", 4)))
+    max_frames = max(min_frames, int(item.get("max_frames", 64)))
+    requested_fps = max(0.01, float(item.get("fps", 2.0)))
+    target_frames = min(max(round(duration * requested_fps), min_frames), max_frames)
+    target_frames -= target_frames % 2
+    target_frames = max(2, target_frames)
+    sampling_fps = target_frames / duration
+
+    frame_dir = Path(temp_dir) / f"video_{index:04d}"
+    frame_dir.mkdir(parents=True)
+    output_pattern = str(frame_dir / "%04d.jpg")
+    frame_command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-filter_threads",
+        "1",
+        "-threads",
+        "1",
+        "-ss",
+        f"{start:.3f}",
+        "-t",
+        f"{duration:.3f}",
+        "-i",
+        source_path,
+        "-an",
+        "-sn",
+        "-dn",
+        "-vf",
+        f"fps={sampling_fps:.8f}",
+        "-frames:v",
+        str(target_frames),
+        "-q:v",
+        "3",
+        "-y",
+        output_pattern,
+    ]
+    subprocess.run(frame_command, check=True, capture_output=True, timeout=timeout)
+    frame_paths = sorted(frame_dir.glob("*.jpg"))
+    if not frame_paths:
+        raise ValueError(f"FFmpeg decoded no frames from {source_path}")
+    while len(frame_paths) < min_frames:
+        frame_paths.append(frame_paths[-1])
+    if len(frame_paths) % 2:
+        frame_paths.append(frame_paths[-1])
+
+    audio = _decode_audio(ffmpeg, source_path, start, duration, timeout)
+    return [frame.resolve().as_uri() for frame in frame_paths], audio
+
+
+def _process_audio_video_with_ffmpeg(messages: list[dict], image_patch_size: int):
+    from qwen_omni_utils import process_mm_info
+
+    transformed = copy.deepcopy(messages)
+    audios = []
+    with tempfile.TemporaryDirectory(prefix="omnivideo_input_") as temp_dir:
+        video_index = 0
+        for message in transformed:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "video":
+                    continue
+                frame_paths, audio = _materialize_video_item(item, temp_dir, video_index)
+                video_index += 1
+                item["video"] = frame_paths
+                item.pop("video_url", None)
+                audios.append(audio)
+
+        _, images, videos = process_mm_info(
+            transformed,
+            use_audio_in_video=False,
+            image_patch_size=image_patch_size,
         )
-    ffdec.COMMANDS = (ffmpeg_exe,)
+    return audios or None, images, videos
 
 
 class QwenOmniRLHFDataset(RLHFDataset):
@@ -64,10 +215,11 @@ class QwenOmniRLHFDataset(RLHFDataset):
         # from each video to avoid duplicating media on disk.
         use_audio_in_video = bool(config.get("use_audio_in_video", False))
         if use_audio_in_video:
-            _ensure_audioread_ffmpeg()
-        audios, images, videos = process_mm_info(
-            messages,
-            use_audio_in_video=use_audio_in_video,
-            image_patch_size=image_patch_size,
-        )
+            audios, images, videos = _process_audio_video_with_ffmpeg(messages, image_patch_size)
+        else:
+            audios, images, videos = process_mm_info(
+                messages,
+                use_audio_in_video=False,
+                image_patch_size=image_patch_size,
+            )
         return images, videos, audios
