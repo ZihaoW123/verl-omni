@@ -68,6 +68,35 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-64}
 
 ENGINE=vllm_omni
 
+HOSTMEM_COLLECTOR_PID=""
+
+stop_host_memory_collector() {
+    if [ -n "$HOSTMEM_COLLECTOR_PID" ] && kill -0 "$HOSTMEM_COLLECTOR_PID" 2>/dev/null; then
+        kill "$HOSTMEM_COLLECTOR_PID" 2>/dev/null || true
+        wait "$HOSTMEM_COLLECTOR_PID" 2>/dev/null || true
+    fi
+}
+
+trap stop_host_memory_collector EXIT
+
+if [ "$DEVICE" = "npu" ] && [ "${A3_HOST_MEMORY_COLLECT:-1}" = "1" ]; then
+    SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+    HOSTMEM_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    A3_HOST_MEMORY_LOG=${A3_HOST_MEMORY_LOG:-a3_hostmem_${HOSTMEM_TIMESTAMP}.log}
+    A3_HOST_MEMORY_INTERVAL_SECONDS=${A3_HOST_MEMORY_INTERVAL_SECONDS:-60}
+    A3_HOST_MEMORY_COMPACT=${A3_HOST_MEMORY_COMPACT:-1}
+    A3_HOST_MEMORY_TOP_PSS_PROCESSES=${A3_HOST_MEMORY_TOP_PSS_PROCESSES:-40}
+
+    COMPACT=$A3_HOST_MEMORY_COMPACT \
+        SAMPLES=0 \
+        INTERVAL_SECONDS=$A3_HOST_MEMORY_INTERVAL_SECONDS \
+        TOP_PSS_PROCESSES=$A3_HOST_MEMORY_TOP_PSS_PROCESSES \
+        "$SCRIPT_DIR/collect_a3_host_memory.sh" "$A3_HOST_MEMORY_LOG" \
+        >/dev/null 2>&1 &
+    HOSTMEM_COLLECTOR_PID=$!
+    echo "A3 host-memory collection started: pid=$HOSTMEM_COLLECTOR_PID log=$A3_HOST_MEMORY_LOG"
+fi
+
 python3 -m verl_omni.trainer.main_diffusion \
     trainer.device=$DEVICE \
     algorithm.adv_estimator=dance_grpo \

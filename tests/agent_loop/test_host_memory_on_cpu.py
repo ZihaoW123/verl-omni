@@ -41,6 +41,12 @@ def test_trim_host_memory_is_portable(monkeypatch):
     assert host_memory.trim_host_memory() is False
 
 
+def test_mapping_category_separates_plasma_from_files():
+    assert host_memory._mapping_category("/dev/shm/plasmaAbCd") == "plasma"
+    assert host_memory._mapping_category("/dev/shm/other") == "shmem"
+    assert host_memory._mapping_category("/usr/lib/libc.so.6") == "file"
+
+
 def test_diagnostics_distinguish_python_glibc_and_anonymous_memory(monkeypatch, capsys):
     snapshots = iter(
         [

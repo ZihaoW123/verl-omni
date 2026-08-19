@@ -89,6 +89,10 @@ def _mapping_category(pathname: str) -> str:
         return "heap"
     if not pathname:
         return "anon"
+    if pathname.startswith("/dev/shm/plasma"):
+        return "plasma"
+    if pathname.startswith("/dev/shm/") or pathname.startswith("/memfd:"):
+        return "shmem"
     if pathname.startswith("/"):
         return "file"
     return "other"
@@ -97,7 +101,7 @@ def _mapping_category(pathname: str) -> str:
 def _read_smaps_categories() -> dict[str, int]:
     totals = {
         f"{category}_{metric}_kib": 0
-        for category in ("heap", "anon", "file", "other")
+        for category in ("heap", "anon", "plasma", "shmem", "file", "other")
         for metric in ("rss", "private_dirty")
     }
     category = "other"
@@ -134,16 +138,40 @@ def _allocator_stats() -> dict[str, int]:
 def _process_memory_snapshot(*, include_mapping_categories: bool) -> dict[str, int]:
     status = _read_proc_kib(
         "/proc/self/status",
-        {"VmRSS", "VmData", "VmLck", "RssAnon", "RssFile"},
+        {"VmRSS", "VmData", "VmLck", "RssAnon", "RssFile", "RssShmem"},
     )
-    rollup = _read_proc_kib("/proc/self/smaps_rollup", {"Private_Dirty", "Locked"})
+    rollup = _read_proc_kib(
+        "/proc/self/smaps_rollup",
+        {
+            "Rss",
+            "Pss",
+            "Pss_Anon",
+            "Pss_File",
+            "Pss_Shmem",
+            "Private_Clean",
+            "Private_Dirty",
+            "Shared_Dirty",
+            "LazyFree",
+            "AnonHugePages",
+            "Locked",
+        },
+    )
     snapshot = {
         "rss_kib": status.get("VmRSS", 0),
         "rss_anon_kib": status.get("RssAnon", 0),
         "rss_file_kib": status.get("RssFile", 0),
+        "rss_shmem_kib": status.get("RssShmem", 0),
         "vm_data_kib": status.get("VmData", 0),
         "vm_locked_kib": status.get("VmLck", 0),
+        "pss_kib": rollup.get("Pss", 0),
+        "pss_anon_kib": rollup.get("Pss_Anon", 0),
+        "pss_file_kib": rollup.get("Pss_File", 0),
+        "pss_shmem_kib": rollup.get("Pss_Shmem", 0),
+        "private_clean_kib": rollup.get("Private_Clean", 0),
         "private_dirty_kib": rollup.get("Private_Dirty", 0),
+        "shared_dirty_kib": rollup.get("Shared_Dirty", 0),
+        "lazy_free_kib": rollup.get("LazyFree", 0),
+        "anon_huge_pages_kib": rollup.get("AnonHugePages", 0),
         "locked_kib": rollup.get("Locked", 0),
         **_allocator_stats(),
     }
