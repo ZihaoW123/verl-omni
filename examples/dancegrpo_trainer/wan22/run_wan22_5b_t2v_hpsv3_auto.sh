@@ -90,11 +90,11 @@ python3 -m verl_omni.trainer.main_diffusion \
     actor_rollout_ref.rollout.pipeline.height=704 \
     actor_rollout_ref.rollout.pipeline.width=1280 \
     actor_rollout_ref.rollout.pipeline.num_frames=8 \
-    actor_rollout_ref.rollout.pipeline.output_type=np \
+    +actor_rollout_ref.rollout.pipeline.output_type=np \
     actor_rollout_ref.rollout.pipeline.num_inference_steps=10 \
     actor_rollout_ref.rollout.pipeline.guidance_scale=5.0 \
     actor_rollout_ref.rollout.pipeline.max_sequence_length=1024 \
-    actor_rollout_ref.rollout.val_kwargs.pipeline.output_type=np \
+    +actor_rollout_ref.rollout.val_kwargs.pipeline.output_type=np \
     actor_rollout_ref.rollout.algo.noise_level=1.2 \
     actor_rollout_ref.rollout.algo.sde_type="dance_sde" \
     actor_rollout_ref.rollout.algo.sde_window_size=2 \
