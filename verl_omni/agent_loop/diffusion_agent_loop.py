@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import os
 import random
 from typing import Any, Optional
 
@@ -37,6 +38,7 @@ from verl.utils.profiler import simple_timer
 from verl.workers.rollout.llm_server import LLMServerClient
 
 from verl_omni.agent_loop.utils import maybe_per_rollout_seeds
+from verl_omni.utils.process_memory import collect_and_trim_process_memory, current_process_rss_bytes
 from verl_omni.workers.config import DiffusionModelConfig, DiffusionRolloutConfig
 
 
@@ -134,6 +136,9 @@ class DiffusionAgentLoopWorker:
 
         self.dataset_cls = get_dataset_class(config.data)
         self.reward_loop_worker_handles = reward_loop_worker_handles
+        self.rollout_only = bool(config.trainer.get("rollout_only", False))
+        self.rollout_only_memory_trim = bool(config.trainer.get("rollout_only_memory_trim", False))
+        self._rollout_only_rss_baseline_bytes: Optional[int] = None
 
         self.tokenizer = self.model_config.tokenizer
         self.processor = self.model_config.processor
@@ -176,6 +181,10 @@ class DiffusionAgentLoopWorker:
                 extra info for logging/validation.
         """
         config = self.rollout_config
+        if self.rollout_only:
+            if self.rollout_only_memory_trim:
+                collect_and_trim_process_memory()
+            self._log_rollout_only_memory(batch.meta_info.get("global_steps"), "start")
 
         sampling_params = {
             **_config_to_sampling_dict(config.pipeline),
@@ -217,7 +226,23 @@ class DiffusionAgentLoopWorker:
 
         output = self._postprocess(outputs, input_non_tensor_batch=batch.non_tensor_batch)
 
+        if self.rollout_only:
+            self._log_rollout_only_memory(batch.meta_info.get("global_steps"), "end")
+
         return output
+
+    def _log_rollout_only_memory(self, global_step: Optional[int], phase: str) -> None:
+        rss_bytes = current_process_rss_bytes()
+        if self._rollout_only_rss_baseline_bytes is None:
+            self._rollout_only_rss_baseline_bytes = rss_bytes
+        baseline_delta_bytes = rss_bytes - self._rollout_only_rss_baseline_bytes
+        gib = 1024**3
+        print(
+            "[DEBUG-rollout-only-rss] "
+            f"pid={os.getpid()} step={global_step} phase={phase} "
+            f"rss_gib={rss_bytes / gib:.3f} baseline_delta_gib={baseline_delta_bytes / gib:+.3f}",
+            flush=True,
+        )
 
     async def _run_agent_loop(
         self,

@@ -77,6 +77,7 @@ from verl_omni.trainer.diffusion.rollout_correction import (
     compute_rollout_corr_metrics_from_batch,
     rollout_correction_enabled,
 )
+from verl_omni.utils.process_memory import collect_and_trim_process_memory, current_process_rss_bytes
 from verl_omni.utils.tracking import _export_video, batch_items, log_wandb_media, wrap_val_samples_for_wandb
 from verl_omni.workers.utils.padding import embeds_padding_2_no_padding
 
@@ -748,17 +749,7 @@ class BaseRayDiffusionTrainer(ABC):
 
     def _init_online_rollout_stack(self, actor_rollout_resource_pool):
         """Initialize rollout, reward, and checkpoint engines (online sampling only)."""
-        # create reward loop manager
-        from verl_omni.reward_loop import OmniRewardLoopManager
-
-        # initalize reward loop manager
-        # reward model (colocate or standalone): get resource_pool
-        # no reward model: resource_pool = None
-        resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel) if self.use_rm else None
-        self.reward_loop_manager = OmniRewardLoopManager(
-            config=self.config,
-            rm_resource_pool=resource_pool,
-        )
+        reward_loop_worker_handles = self._init_reward_loop()
 
         # create async rollout manager and request scheduler
         # Note: mode is always "async" since sync mode is deprecated
@@ -774,17 +765,6 @@ class BaseRayDiffusionTrainer(ABC):
             from verl_omni.agent_loop import DiffusionAgentLoopWorker
 
             AgentLoopManager.agent_loop_workers_class = ray.remote(DiffusionAgentLoopWorker)
-
-        # infrastructure overview: https://verl.readthedocs.io/en/latest/advance/reward_loop.html#architecture-design
-        # agent_reward_loop: streaming reward computation with actor rollout
-        # two conditions satisfied: (1) no reward model, or (2) reward model with extra resource pool
-        self.enable_agent_reward_loop = not self.use_rm or self.config.reward.reward_model.enable_resource_pool
-
-        # if enable_agent_reward_loop, we directly pass reward_loop_workers to agent loop manager
-        # to stream reward computation with actor rollout
-        reward_loop_worker_handles = (
-            self.reward_loop_manager.reward_loop_workers if self.enable_agent_reward_loop else None
-        )
 
         self.llm_server_manager = LLMServerManager.create(
             config=self.config,
@@ -806,6 +786,29 @@ class BaseRayDiffusionTrainer(ABC):
 
         # sleep all replicas to load checkpoint
         self.checkpoint_manager.sleep_replicas()
+
+    def _init_reward_loop(self):
+        """Initialize reward actors unless rollout-only diagnostics explicitly disable them."""
+        if self.config.trainer.get("rollout_only", False):
+            self.reward_loop_manager = None
+            self.enable_agent_reward_loop = False
+            print("[rollout-only] Reward loop initialization is disabled.", flush=True)
+            return None
+
+        from verl_omni.reward_loop import OmniRewardLoopManager
+
+        # Reward model (colocate or standalone): get resource_pool.
+        # No reward model: resource_pool = None.
+        resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel) if self.use_rm else None
+        self.reward_loop_manager = OmniRewardLoopManager(
+            config=self.config,
+            rm_resource_pool=resource_pool,
+        )
+
+        # Streaming reward computation is enabled when there is no reward model, or
+        # when the reward model owns a separate resource pool.
+        self.enable_agent_reward_loop = not self.use_rm or self.config.reward.reward_model.enable_resource_pool
+        return self.reward_loop_manager.reward_loop_workers if self.enable_agent_reward_loop else None
 
     def _save_checkpoint(self):
         from verl.utils.fs import local_mkdir_safe
@@ -1046,6 +1049,91 @@ class PolicyGradientRayTrainer(BaseRayDiffusionTrainer):
         old_log_prob_mfu = tu.get(output, "metrics").get("mfu")
         return DataProto.from_tensordict(old_log_prob), old_log_prob_mfu
 
+    def _fit_rollout_only(self, logger) -> None:
+        """Run repeated generation without reward, training, validation, or checkpoint saves."""
+        print(
+            "[rollout-only] Starting inference-only memory diagnostic: "
+            "reward, log-prob recomputation, advantage, and actor updates are disabled.",
+            flush=True,
+        )
+        progress_bar = tqdm(
+            total=self.total_training_steps,
+            initial=self.global_steps,
+            desc="Rollout-only diagnostic",
+        )
+        self.global_steps += 1
+
+        while self.global_steps <= self.total_training_steps:
+            batches_processed = 0
+            for batch_dict in self.train_dataloader:
+                batches_processed += 1
+                if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
+                    self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=False)
+
+                batch = DataProto.from_single_dict(batch_dict)
+                batch.non_tensor_batch["uid"] = np.array(
+                    [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
+                )
+                gen_batch = self._get_gen_batch(batch)
+                gen_batch.meta_info["global_steps"] = self.global_steps
+
+                rollout_seed_cfg = self.config.actor_rollout_ref.rollout.get("seed")
+                if rollout_seed_cfg is not None:
+                    gen_batch.meta_info["rollout_seed"] = int(rollout_seed_cfg) + self.global_steps - 1
+
+                rollout_input = gen_batch.repeat(
+                    repeat_times=self.config.actor_rollout_ref.rollout.n,
+                    interleave=True,
+                )
+                rollout_input.non_tensor_batch["_rollout_seed_global_idx"] = np.arange(
+                    len(rollout_input), dtype=np.int64
+                )
+
+                timing_raw = {}
+                with marked_timer("gen", timing_raw, color="red"):
+                    rollout_output = self.async_rollout_manager.generate_sequences(rollout_input)
+                    self.checkpoint_manager.sleep_replicas()
+
+                generated_samples = len(rollout_output)
+                worker_timing = rollout_output.meta_info.get("timing", {})
+                del rollout_output, rollout_input, gen_batch, batch, batch_dict
+
+                if self.config.trainer.get("rollout_only_memory_trim", False):
+                    collect_and_trim_process_memory()
+                driver_rss_gib = current_process_rss_bytes() / 1024**3
+                metrics = {
+                    "diagnostic/global_step": self.global_steps,
+                    "diagnostic/generated_samples": generated_samples,
+                    "diagnostic/rollout_seconds": timing_raw["gen"],
+                    "diagnostic/driver_rss_gib": driver_rss_gib,
+                }
+                for key, value in worker_timing.items():
+                    if isinstance(value, int | float):
+                        metrics[f"diagnostic/worker_timing/{key}"] = value
+                logger.log(data=metrics, step=self.global_steps)
+                print(
+                    "[DEBUG-rollout-only-rss] "
+                    f"pid={os.getpid()} step={self.global_steps} phase=driver_after_release "
+                    f"rss_gib={driver_rss_gib:.3f}",
+                    flush=True,
+                )
+
+                is_last_step = self.global_steps >= self.total_training_steps
+                progress_bar.update(1)
+                self.global_steps += 1
+                if is_last_step:
+                    if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
+                        self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=True)
+                    progress_bar.close()
+                    return
+                del worker_timing
+
+            if batches_processed == 0:
+                progress_bar.close()
+                raise RuntimeError("Rollout-only diagnostic cannot run with an empty training dataloader.")
+
+        progress_bar.close()
+
     def fit(self):
         """
         The training loop of FlowGRPO.
@@ -1068,6 +1156,10 @@ class PolicyGradientRayTrainer(BaseRayDiffusionTrainer):
         # load checkpoint and update weights before doing anything
         self._load_checkpoint()
         self.checkpoint_manager.update_weights(self.global_steps)
+
+        if self.config.trainer.get("rollout_only", False):
+            self._fit_rollout_only(logger)
+            return
 
         current_epoch = self.global_steps // len(self.train_dataloader)
 
