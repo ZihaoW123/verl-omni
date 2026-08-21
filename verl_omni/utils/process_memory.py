@@ -19,6 +19,38 @@ import resource
 import sys
 
 
+def process_memory_breakdown_bytes() -> dict[str, int]:
+    """Return Linux smaps_rollup counters in bytes when available."""
+    counters: dict[str, int] = {}
+    try:
+        with open("/proc/self/smaps_rollup") as smaps:
+            for line in smaps:
+                key, separator, remainder = line.partition(":")
+                if not separator:
+                    continue
+                parts = remainder.split()
+                if parts and parts[0].isdigit():
+                    counters[key] = int(parts[0]) * 1024
+    except OSError:
+        pass
+    return counters
+
+
+def npu_host_memory_stats_bytes() -> dict[str, int]:
+    """Return torch_npu pinned-host allocator byte counters when supported."""
+    try:
+        import torch_npu
+
+        stats = torch_npu.npu.host_memory_stats()
+    except (AttributeError, ImportError, RuntimeError):
+        return {}
+    return {
+        key: int(value)
+        for key, value in stats.items()
+        if (key.startswith("allocated_bytes.") or key.startswith("active_bytes.")) and isinstance(value, int | float)
+    }
+
+
 def current_process_rss_bytes() -> int:
     """Return the current process RSS, falling back to peak RSS off Linux."""
     try:
@@ -32,8 +64,14 @@ def current_process_rss_bytes() -> int:
 
 
 def collect_and_trim_process_memory() -> bool:
-    """Collect Python objects and ask glibc to release free heap pages."""
+    """Release Python, torch_npu pinned-host, and glibc memory caches."""
     gc.collect()
+    try:
+        import torch_npu
+
+        torch_npu.npu.host_empty_cache()
+    except (AttributeError, ImportError, RuntimeError):
+        pass
     if not sys.platform.startswith("linux"):
         return False
     try:

@@ -6,10 +6,12 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROLLOUT_ONLY_STEPS=${ROLLOUT_ONLY_STEPS:-30}
 ROLLOUT_ONLY_MEMORY_TRIM=${ROLLOUT_ONLY_MEMORY_TRIM:-true}
+ROLLOUT_ONLY_DROP_OUTPUTS=${ROLLOUT_ONLY_DROP_OUTPUTS:-true}
 
 bash "$SCRIPT_DIR/run_wan22_5b_t2v_hpsv3_auto.sh" \
     +trainer.rollout_only=true \
     +trainer.rollout_only_memory_trim="$ROLLOUT_ONLY_MEMORY_TRIM" \
+    +trainer.rollout_only_drop_outputs="$ROLLOUT_ONLY_DROP_OUTPUTS" \
     trainer.val_before_train=false \
     trainer.resume_mode=disable \
     trainer.save_freq=-1 \

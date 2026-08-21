@@ -701,6 +701,18 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             )
 
         assert final_res is not None
+        if sampling_params.get("_verl_rollout_only_drop_outputs", False):
+            # The rollout-only memory diagnostic exercises the full engine but
+            # intentionally avoids transporting videos and training trajectories
+            # through Ray. Normal rollout never sets this private sampling flag.
+            return DiffusionOutput(
+                diffusion_output=torch.empty(0, dtype=torch.uint8),
+                log_probs=None,
+                stop_reason="completed",
+                num_preempted=None,
+                extra_fields={"global_steps": self.global_steps},
+            )
+
         diffusion_output = final_res.images[0]
         if isinstance(diffusion_output, dict):
             for key in ("video", "image", "output", "audio"):

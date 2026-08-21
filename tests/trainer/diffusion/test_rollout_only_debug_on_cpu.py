@@ -12,11 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
+import torch
 from omegaconf import OmegaConf
 
+from verl_omni.agent_loop.diffusion_agent_loop import DiffusionAgentLoopWorker
 from verl_omni.trainer.diffusion import ray_diffusion_trainer as trainer_module
 from verl_omni.trainer.diffusion.ray_diffusion_trainer import PolicyGradientRayTrainer
-from verl_omni.utils.process_memory import collect_and_trim_process_memory, current_process_rss_bytes
+from verl_omni.utils.process_memory import (
+    collect_and_trim_process_memory,
+    current_process_rss_bytes,
+    npu_host_memory_stats_bytes,
+    process_memory_breakdown_bytes,
+)
+from verl_omni.workers.rollout.vllm_rollout.vllm_omni_async_server import vLLMOmniHttpServer
 
 
 class _FakeBatch:
@@ -58,6 +68,11 @@ class _FakeLogger:
         pass
 
 
+class _FakeMetrics:
+    def model_dump(self):
+        return {"generate_sequences": 1.0, "tool_calls": 0.0, "compute_score": 0.0, "num_preempted": -1}
+
+
 def test_rollout_only_does_not_initialize_reward_loop():
     trainer = PolicyGradientRayTrainer.__new__(PolicyGradientRayTrainer)
     trainer.config = OmegaConf.create({"trainer": {"rollout_only": True}})
@@ -72,6 +87,51 @@ def test_rollout_only_does_not_initialize_reward_loop():
 def test_process_rss_probe_returns_positive_bytes():
     collect_and_trim_process_memory()
     assert current_process_rss_bytes() > 0
+    assert all(value >= 0 for value in process_memory_breakdown_bytes().values())
+    assert all(value >= 0 for value in npu_host_memory_stats_bytes().values())
+
+
+def test_rollout_only_postprocess_drops_large_training_payloads():
+    worker = DiffusionAgentLoopWorker.__new__(DiffusionAgentLoopWorker)
+    inputs = [
+        SimpleNamespace(
+            prompt_ids=torch.tensor([[1, 2]]),
+            metrics=_FakeMetrics(),
+            response_diffusion_output=torch.empty((1, 8, 3, 64, 64), dtype=torch.uint8),
+            response_logprobs=torch.empty((1, 2)),
+            extra_fields={"all_latents": torch.empty((1, 3, 4, 8, 8))},
+        ),
+        SimpleNamespace(
+            prompt_ids=torch.tensor([[3, 4]]),
+            metrics=_FakeMetrics(),
+            response_diffusion_output=torch.empty((1, 8, 3, 64, 64), dtype=torch.uint8),
+            response_logprobs=torch.empty((1, 2)),
+            extra_fields={"all_latents": torch.empty((1, 3, 4, 8, 8))},
+        ),
+    ]
+
+    output = worker._postprocess_rollout_only(inputs)
+
+    assert set(output.batch.keys()) == {"prompts"}
+    assert output.batch["prompts"].tolist() == [[1, 2], [3, 4]]
+    assert len(output.meta_info["metrics"]) == 2
+
+
+def test_rollout_server_drops_payload_before_ray_transport():
+    server = SimpleNamespace(_ar_mode=False, global_steps=3)
+    final_res = SimpleNamespace(images=[object()])
+
+    output = vLLMOmniHttpServer._process_output(
+        server,
+        final_res,
+        params=None,
+        sampling_params={"_verl_rollout_only_drop_outputs": True},
+    )
+
+    assert output.diffusion_output.dtype == torch.uint8
+    assert output.diffusion_output.numel() == 0
+    assert output.log_probs is None
+    assert output.extra_fields == {"global_steps": 3}
 
 
 def test_rollout_only_keeps_replicas_awake_across_steps(monkeypatch):

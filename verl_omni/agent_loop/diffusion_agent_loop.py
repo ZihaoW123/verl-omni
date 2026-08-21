@@ -38,7 +38,12 @@ from verl.utils.profiler import simple_timer
 from verl.workers.rollout.llm_server import LLMServerClient
 
 from verl_omni.agent_loop.utils import maybe_per_rollout_seeds
-from verl_omni.utils.process_memory import collect_and_trim_process_memory, current_process_rss_bytes
+from verl_omni.utils.process_memory import (
+    collect_and_trim_process_memory,
+    current_process_rss_bytes,
+    npu_host_memory_stats_bytes,
+    process_memory_breakdown_bytes,
+)
 from verl_omni.workers.config import DiffusionModelConfig, DiffusionRolloutConfig
 
 
@@ -138,6 +143,7 @@ class DiffusionAgentLoopWorker:
         self.reward_loop_worker_handles = reward_loop_worker_handles
         self.rollout_only = bool(config.trainer.get("rollout_only", False))
         self.rollout_only_memory_trim = bool(config.trainer.get("rollout_only_memory_trim", False))
+        self.rollout_only_drop_outputs = bool(config.trainer.get("rollout_only_drop_outputs", False))
         self._rollout_only_rss_baseline_bytes: Optional[int] = None
 
         self.tokenizer = self.model_config.tokenizer
@@ -191,6 +197,8 @@ class DiffusionAgentLoopWorker:
             **_config_to_sampling_dict(config.algo),
             "logprobs": config.calculate_log_probs,
         }
+        if self.rollout_only and self.rollout_only_drop_outputs:
+            sampling_params["_verl_rollout_only_drop_outputs"] = True
 
         is_validate = batch.meta_info.get("validate", False)
         per_rollout_seeds: Optional[list[int]] = None
@@ -224,25 +232,83 @@ class DiffusionAgentLoopWorker:
             )
         outputs = await asyncio.gather(*tasks)
 
-        output = self._postprocess(outputs, input_non_tensor_batch=batch.non_tensor_batch)
+        if self.rollout_only and self.rollout_only_drop_outputs:
+            self._log_rollout_only_payload(batch.meta_info.get("global_steps"), outputs)
+            output = self._postprocess_rollout_only(outputs)
+        else:
+            output = self._postprocess(outputs, input_non_tensor_batch=batch.non_tensor_batch)
+
+        # Completed asyncio tasks retain their result. Drop both containers before
+        # Ray serializes the compact diagnostic response.
+        del outputs, tasks
 
         if self.rollout_only:
+            if self.rollout_only_memory_trim:
+                collect_and_trim_process_memory()
             self._log_rollout_only_memory(batch.meta_info.get("global_steps"), "end")
 
         return output
 
     def _log_rollout_only_memory(self, global_step: Optional[int], phase: str) -> None:
         rss_bytes = current_process_rss_bytes()
+        breakdown = process_memory_breakdown_bytes()
+        npu_host_stats = npu_host_memory_stats_bytes()
         if self._rollout_only_rss_baseline_bytes is None:
             self._rollout_only_rss_baseline_bytes = rss_bytes
         baseline_delta_bytes = rss_bytes - self._rollout_only_rss_baseline_bytes
+        private_bytes = breakdown.get("Private_Clean", 0) + breakdown.get("Private_Dirty", 0)
+        shared_bytes = breakdown.get("Shared_Clean", 0) + breakdown.get("Shared_Dirty", 0)
+        anonymous_bytes = breakdown.get("Anonymous", 0)
+        pss_bytes = breakdown.get("Pss", 0)
+        npu_host_allocated_bytes = npu_host_stats.get("allocated_bytes.current", 0)
+        npu_host_active_bytes = npu_host_stats.get("active_bytes.current", 0)
         gib = 1024**3
         print(
             "[DEBUG-rollout-only-rss] "
             f"pid={os.getpid()} step={global_step} phase={phase} "
-            f"rss_gib={rss_bytes / gib:.3f} baseline_delta_gib={baseline_delta_bytes / gib:+.3f}",
+            f"rss_gib={rss_bytes / gib:.3f} pss_gib={pss_bytes / gib:.3f} "
+            f"private_gib={private_bytes / gib:.3f} shared_gib={shared_bytes / gib:.3f} "
+            f"anonymous_gib={anonymous_bytes / gib:.3f} "
+            f"npu_host_allocated_gib={npu_host_allocated_bytes / gib:.3f} "
+            f"npu_host_active_gib={npu_host_active_bytes / gib:.3f} "
+            f"baseline_delta_gib={baseline_delta_bytes / gib:+.3f}",
             flush=True,
         )
+
+    def _log_rollout_only_payload(
+        self,
+        global_step: Optional[int],
+        outputs: list[_InternalDiffusionAgentLoopOutput],
+    ) -> None:
+        sizes: dict[str, int] = {}
+
+        def add_size(key: str, value: Any) -> None:
+            if isinstance(value, torch.Tensor):
+                sizes[key] = sizes.get(key, 0) + value.numel() * value.element_size()
+            elif isinstance(value, np.ndarray):
+                sizes[key] = sizes.get(key, 0) + value.nbytes
+
+        for item in outputs:
+            add_size("responses", item.response_diffusion_output)
+            add_size("rollout_log_probs", item.response_logprobs)
+            for key, value in item.extra_fields.items():
+                add_size(key, value)
+
+        gib = 1024**3
+        field_sizes = ",".join(f"{key}:{value / gib:.3f}" for key, value in sorted(sizes.items()))
+        print(
+            "[DEBUG-rollout-only-payload] "
+            f"pid={os.getpid()} step={global_step} total_gib={sum(sizes.values()) / gib:.3f} "
+            f"fields_gib={field_sizes}",
+            flush=True,
+        )
+
+    def _postprocess_rollout_only(self, inputs: list[_InternalDiffusionAgentLoopOutput]) -> DataProto:
+        """Return only the small fields required by AgentLoopManager diagnostics."""
+        prompt_ids = torch.cat([item.prompt_ids for item in inputs], dim=0)
+        metrics = [item.metrics.model_dump() for item in inputs]
+        batch = TensorDict({"prompts": prompt_ids}, batch_size=len(inputs))
+        return DataProto(batch=batch, non_tensor_batch={}, meta_info={"metrics": metrics})
 
     async def _run_agent_loop(
         self,
