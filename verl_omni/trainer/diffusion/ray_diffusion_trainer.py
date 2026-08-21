@@ -1092,7 +1092,9 @@ class PolicyGradientRayTrainer(BaseRayDiffusionTrainer):
                 timing_raw = {}
                 with marked_timer("gen", timing_raw, color="red"):
                     rollout_output = self.async_rollout_manager.generate_sequences(rollout_input)
-                    self.checkpoint_manager.sleep_replicas()
+                    # Keep rollout replicas awake between diagnostic steps. In the
+                    # training loop, update_weights() wakes them after sleep_replicas(),
+                    # but rollout-only mode intentionally skips that update path.
 
                 generated_samples = len(rollout_output)
                 worker_timing = rollout_output.meta_info.get("timing", {})
