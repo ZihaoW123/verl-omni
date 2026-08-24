@@ -26,7 +26,6 @@ if [ "$DEVICE" = "npu" ]; then
     ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.0.0}
     source $ASCEND_HOME_PATH/set_env.sh
     source $ASCEND_HOME_PATH/../nnal/atb/set_env.sh
-    export MULTI_STREAM_MEMORY_REUSE=${MULTI_STREAM_MEMORY_REUSE:=2}
 
     ATTENTION_BACKEND='native'
     ROLLOUT_ATTN_BACKEND='TORCH_SDPA'
