@@ -14,10 +14,14 @@
 
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 from omegaconf import OmegaConf
+from tensordict import TensorDict
+from verl.protocol import DataProto
 
-from verl_omni.agent_loop.diffusion_agent_loop import DiffusionAgentLoopWorker
+import verl_omni.agent_loop.diffusion_agent_loop as agent_loop_module
+from verl_omni.agent_loop.diffusion_agent_loop import DiffusionAgentLoopManager, DiffusionAgentLoopWorker
 from verl_omni.trainer.diffusion import ray_diffusion_trainer as trainer_module
 from verl_omni.trainer.diffusion.ray_diffusion_trainer import PolicyGradientRayTrainer
 from verl_omni.utils.process_memory import (
@@ -73,6 +77,51 @@ class _FakeMetrics:
         return {"generate_sequences": 1.0, "tool_calls": 0.0, "compute_score": 0.0, "num_preempted": -1}
 
 
+class _ImmediateObjectRef:
+    def __init__(self, value):
+        self.value = value
+
+    def __await__(self):
+        async def resolve():
+            return self.value
+
+        return resolve().__await__()
+
+
+class _RemoteGenerate:
+    def __init__(self, output):
+        self.output = output
+        self.refs = []
+
+    def remote(self, _chunk):
+        ref = _ImmediateObjectRef(self.output)
+        self.refs.append(ref)
+        return ref
+
+
+class _FakeAgentLoopWorker:
+    def __init__(self, output):
+        self.generate_sequences = _RemoteGenerate(output)
+
+
+def _agent_loop_chunk(prompt_id):
+    metrics = [
+        {
+            "generate_sequences": 1.0,
+            "tool_calls": 0.0,
+            "compute_score": 0.0,
+            "num_preempted": -1,
+        }
+    ]
+    metadata = np.empty(1, dtype=object)
+    metadata[0] = np.array([prompt_id])
+    return DataProto(
+        batch=TensorDict({"prompts": torch.tensor([[prompt_id]])}, batch_size=1),
+        non_tensor_batch={"metadata": metadata},
+        meta_info={"metrics": metrics},
+    )
+
+
 def test_rollout_only_does_not_initialize_reward_loop():
     trainer = PolicyGradientRayTrainer.__new__(PolicyGradientRayTrainer)
     trainer.config = OmegaConf.create({"trainer": {"rollout_only": True}})
@@ -89,6 +138,32 @@ def test_process_rss_probe_returns_positive_bytes():
     assert current_process_rss_bytes() > 0
     assert all(value >= 0 for value in process_memory_breakdown_bytes().values())
     assert all(value >= 0 for value in npu_host_memory_stats_bytes().values())
+
+
+def test_diffusion_agent_loop_manager_frees_worker_ray_outputs(monkeypatch):
+    freed_refs = []
+
+    def fake_free(refs, *, local_only=False):
+        freed_refs.append((tuple(refs), local_only))
+
+    monkeypatch.setattr(agent_loop_module, "free_ray_object_refs", fake_free)
+
+    manager = DiffusionAgentLoopManager.__new__(DiffusionAgentLoopManager)
+    workers = [_FakeAgentLoopWorker(_agent_loop_chunk(1)), _FakeAgentLoopWorker(_agent_loop_chunk(2))]
+    manager.agent_loop_workers = workers
+    prompts = DataProto(
+        batch=TensorDict({"prompts": torch.tensor([[1], [2]])}, batch_size=2),
+        non_tensor_batch={},
+        meta_info={},
+    )
+
+    output = manager.generate_sequences(prompts)
+
+    refs = tuple(worker.generate_sequences.refs[0] for worker in workers)
+    assert freed_refs == [(refs, False)]
+    assert output.batch["prompts"].tolist() == [[1], [2]]
+    workers[0].generate_sequences.output.non_tensor_batch["metadata"][0][0] = 99
+    assert output.non_tensor_batch["metadata"][0].tolist() == [1]
 
 
 def test_rollout_only_postprocess_drops_large_training_payloads():

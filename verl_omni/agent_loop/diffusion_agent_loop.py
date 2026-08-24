@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import copy
 import os
 import random
 from typing import Any, Optional
@@ -23,9 +24,11 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel, ConfigDict
+from ray._private.internal_api import free as free_ray_object_refs
 from tensordict import TensorDict
 from verl.base_config import BaseConfig
 from verl.experimental.agent_loop.agent_loop import (
+    AgentLoopManager,
     AgentLoopMetrics,
     DictConfigWrap,
     _agent_loop_registry,
@@ -35,6 +38,8 @@ from verl.protocol import DataProto
 from verl.utils.config import omega_conf_to_dataclass
 from verl.utils.dataset.rl_dataset import get_dataset_class
 from verl.utils.profiler import simple_timer
+from verl.utils.ray_utils import auto_await
+from verl.utils.skip import SkipManager
 from verl.workers.rollout.llm_server import LLMServerClient
 
 from verl_omni.agent_loop.utils import maybe_per_rollout_seeds
@@ -492,3 +497,40 @@ class DiffusionAgentLoopWorker:
             non_tensor_batch=non_tensor_batch,
             meta_info=meta_info,
         )
+
+
+class DiffusionAgentLoopManager(AgentLoopManager):
+    """Agent-loop manager that promptly releases large worker return objects.
+
+    ``DataProto.concat`` owns new tensor and NumPy storage, so the Ray objects
+    returned by individual workers are no longer needed after concatenation.
+    Explicitly freeing them prevents large diffusion trajectories from remaining
+    mapped in the driver and producing workers across training steps.
+    """
+
+    @auto_await
+    @SkipManager.annotate(role="rollout")
+    async def generate_sequences(self, prompts: DataProto) -> DataProto:
+        """Dispatch rollout chunks, concatenate their results, and free their Ray objects."""
+        chunks = prompts.chunk(len(self.agent_loop_workers))
+        output_refs = [
+            worker.generate_sequences.remote(chunk)
+            for worker, chunk in zip(self.agent_loop_workers, chunks, strict=True)
+        ]
+        outputs = await asyncio.gather(*output_refs)
+
+        try:
+            output = DataProto.concat(outputs)
+            # torch.cat already detaches the TensorDict storage. Object-dtype
+            # NumPy fields can still contain views into a Ray object, so deep-copy
+            # the much smaller non-tensor payload before freeing the ObjectRefs.
+            output.non_tensor_batch = copy.deepcopy(output.non_tensor_batch)
+            metrics = [chunk_output.meta_info.pop("metrics") for chunk_output in outputs]
+            timing = self._performance_metrics(metrics, output)
+            output.meta_info = {"timing": timing, **outputs[0].meta_info}
+            return output
+        finally:
+            # The concatenated DataProto is independent of the per-worker Ray
+            # objects. Release those Plasma objects before the next rollout.
+            outputs.clear()
+            free_ray_object_refs(output_refs, local_only=False)
