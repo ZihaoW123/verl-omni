@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-import copy
 import random
-import warnings
-from dataclasses import dataclass
 from typing import Any, Optional
 
 import hydra
@@ -25,11 +22,9 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel, ConfigDict
-from ray._private.internal_api import free as free_ray_object_refs
 from tensordict import TensorDict
 from verl.base_config import BaseConfig
 from verl.experimental.agent_loop.agent_loop import (
-    AgentLoopManager,
     AgentLoopMetrics,
     DictConfigWrap,
     _agent_loop_registry,
@@ -39,8 +34,6 @@ from verl.protocol import DataProto
 from verl.utils.config import omega_conf_to_dataclass
 from verl.utils.dataset.rl_dataset import get_dataset_class
 from verl.utils.profiler import simple_timer
-from verl.utils.ray_utils import auto_await
-from verl.utils.skip import SkipManager
 from verl.workers.rollout.llm_server import LLMServerClient
 
 from verl_omni.agent_loop.utils import maybe_per_rollout_seeds
@@ -71,78 +64,6 @@ def _pad_prompt_extra_field(key: str, value: torch.Tensor, target_length: int) -
             )
         return F.pad(value, (0, target_length - current_length), value=0)
     return value
-
-
-@dataclass
-class _NumpyDataProtoPayload:
-    """Ray transport that keeps large CPU tensors in NumPy/Plasma buffers."""
-
-    batch_size: tuple[int, ...] | None
-    batch: dict[str, tuple[Any, ...]] | None
-    non_tensor_batch: dict[str, np.ndarray]
-    meta_info: dict[str, Any]
-
-
-def _tensor_to_numpy_payload(tensor: torch.Tensor) -> tuple[str, tuple[int, ...], np.ndarray]:
-    """Expose a CPU tensor as bytes without allocating another tensor-sized buffer."""
-    if tensor.device.type != "cpu":
-        raise ValueError(f"Diffusion rollout transport requires CPU tensors, got {tensor.device}.")
-    tensor = tensor.detach().contiguous()
-    data = tensor.flatten().view(torch.uint8).numpy()
-    return str(tensor.dtype).removeprefix("torch."), tuple(tensor.shape), data
-
-
-def _tensor_from_numpy_payload(payload: tuple[str, tuple[int, ...], np.ndarray]) -> torch.Tensor:
-    """Create a read-only tensor view over a Ray-owned NumPy buffer."""
-    dtype_name, shape, data = payload
-    dtype = getattr(torch, dtype_name)
-    if not isinstance(dtype, torch.dtype):
-        raise TypeError(f"Invalid torch dtype in rollout payload: {dtype_name!r}.")
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
-        raw = torch.from_numpy(data)
-    return raw.view(dtype).view(shape)
-
-
-def _data_proto_to_numpy_payload(output: DataProto) -> _NumpyDataProtoPayload:
-    if output.batch is None:
-        batch_size = None
-        encoded_batch = None
-    else:
-        batch_size = tuple(output.batch.batch_size)
-        encoded_batch = {}
-        for key, value in output.batch.items():
-            if value.is_nested:
-                layout = str(value.layout).removeprefix("torch.")
-                encoded_batch[key] = (layout, [_tensor_to_numpy_payload(item) for item in value.unbind()])
-            else:
-                encoded_batch[key] = _tensor_to_numpy_payload(value)
-    return _NumpyDataProtoPayload(
-        batch_size=batch_size,
-        batch=encoded_batch,
-        non_tensor_batch=output.non_tensor_batch,
-        meta_info=output.meta_info,
-    )
-
-
-def _data_proto_from_numpy_payload(payload: _NumpyDataProtoPayload) -> DataProto:
-    if payload.batch is None:
-        batch = None
-    else:
-        decoded_batch = {}
-        for key, value in payload.batch.items():
-            if len(value) == 3:
-                decoded_batch[key] = _tensor_from_numpy_payload(value)
-            elif len(value) == 2:
-                layout, tensors = value
-                decoded_batch[key] = torch.nested.as_nested_tensor(
-                    [_tensor_from_numpy_payload(tensor) for tensor in tensors],
-                    layout=getattr(torch, layout),
-                )
-            else:
-                raise ValueError(f"Invalid rollout tensor payload for {key!r}: expected 2 or 3 items.")
-        batch = TensorDict(source=decoded_batch, batch_size=payload.batch_size)
-    return DataProto(batch=batch, non_tensor_batch=payload.non_tensor_batch, meta_info=payload.meta_info)
 
 
 class DiffusionAgentLoopOutput(BaseModel):
@@ -300,20 +221,6 @@ class DiffusionAgentLoopWorker:
         output = self._postprocess(outputs, input_non_tensor_batch=batch.non_tensor_batch)
 
         return output
-
-    async def generate_sequences_to_object_store(self, batch: DataProto) -> ray.ObjectRef:
-        """Put a NumPy-backed rollout payload in Ray's object store.
-
-        Ray's Torch deserializer allocates new CPU tensor storage for actor results.
-        The aarch64 allocator does not reliably return that storage, so repeated
-        multi-GiB rollouts grow the manager RSS. NumPy buffers remain Plasma-backed
-        and are viewed without a tensor-sized receive-side allocation.
-        """
-        output = await self.generate_sequences(batch)
-        payload = _data_proto_to_numpy_payload(output)
-        output_ref = ray.put(payload)
-        del payload, output
-        return output_ref
 
     async def _run_agent_loop(
         self,
@@ -498,43 +405,3 @@ class DiffusionAgentLoopWorker:
             non_tensor_batch=non_tensor_batch,
             meta_info=meta_info,
         )
-
-
-class DiffusionAgentLoopManager(AgentLoopManager):
-    """Agent-loop manager that uses zero-copy Ray inputs and releases them promptly.
-
-    ``DataProto.concat`` copies the read-only NumPy-backed tensor views into normal
-    owned tensors. The Ray objects can then be released before the next rollout.
-    """
-
-    @auto_await
-    @SkipManager.annotate(role="rollout")
-    async def generate_sequences(self, prompts: DataProto) -> DataProto:
-        """Dispatch rollout chunks, concatenate their results, and free their Ray objects."""
-        chunks = prompts.chunk(len(self.agent_loop_workers))
-        outer_refs = [
-            worker.generate_sequences_to_object_store.remote(chunk)
-            for worker, chunk in zip(self.agent_loop_workers, chunks, strict=True)
-        ]
-        data_refs = []
-        payloads = []
-        outputs = []
-        try:
-            # Avoid awaiting ObjectRefs through asyncio: completed Futures can retain
-            # deserialized tensor storage in the manager process on aarch64.
-            data_refs = ray.get(outer_refs)
-            payloads = ray.get(data_refs)
-            outputs = [_data_proto_from_numpy_payload(payload) for payload in payloads]
-
-            output = DataProto.concat(outputs)
-            # Tensor concatenation owns its storage. Deep-copy object-dtype fields
-            # that may still contain views into a Ray-owned payload.
-            output.non_tensor_batch = copy.deepcopy(output.non_tensor_batch)
-            metrics = [chunk_output.meta_info.pop("metrics") for chunk_output in outputs]
-            timing = self._performance_metrics(metrics, output)
-            output.meta_info = {"timing": timing, **outputs[0].meta_info}
-            return output
-        finally:
-            outputs.clear()
-            payloads.clear()
-            free_ray_object_refs(data_refs + outer_refs, local_only=False)
