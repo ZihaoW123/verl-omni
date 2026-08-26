@@ -93,9 +93,14 @@ def _cast_loaded_diffusers_module(
     module.to(torch_dtype)
 
 
-def _fsdp_param_dtype(module: torch.nn.Module, configured_dtype: torch.dtype) -> Optional[torch.dtype]:
-    """Keep checkpoint parameter dtypes when an architecture declares fp32 islands."""
-    if len({parameter.dtype for parameter in module.parameters()}) > 1:
+def _fsdp_param_dtype(
+    module: torch.nn.Module,
+    configured_dtype: torch.dtype,
+    *,
+    preserve_fp32_modules: bool = True,
+) -> Optional[torch.dtype]:
+    """Disable FSDP casting only for declared fp32 islands that are preserved."""
+    if preserve_fp32_modules and getattr(module, "_keep_in_fp32_modules", None):
         return None
     return configured_dtype
 
@@ -344,8 +349,16 @@ class DiffusersFSDPEngine(LoRAAdapterMixin, BaseEngine, ABC):
             reduce_dtype = torch.float32
             buffer_dtype = torch.float32
 
-        # None preserves fp32 islands; a real dtype makes FSDP flatten them.
-        param_dtype = _fsdp_param_dtype(module, param_dtype)
+        model_cls = DiffusionModelBase.get_class(self.model_config)
+        preserve_fp32_modules = model_cls.preserve_fp32_modules()
+
+        # None preserves declared fp32 islands; a real dtype lets FSDP cast
+        # forward inputs and flatten parameters using the configured dtype.
+        param_dtype = _fsdp_param_dtype(
+            module,
+            param_dtype,
+            preserve_fp32_modules=preserve_fp32_modules,
+        )
         mixed_precision = MixedPrecision(param_dtype=param_dtype, reduce_dtype=reduce_dtype, buffer_dtype=buffer_dtype)
 
         auto_wrap_policy = get_fsdp_wrap_policy(
