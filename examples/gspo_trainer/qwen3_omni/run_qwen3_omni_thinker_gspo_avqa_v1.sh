@@ -25,38 +25,26 @@ if [[ "${DEVICE}" == "npu" ]]; then
 fi
 
 # This recipe needs verl's native FSDP gradient-accumulation synchronization option.
-VERL_COMMIT=a0feb78fe8229fde644aec3bbec20b5dc4583509
-check_verl_commit() {
-    python3 - "${VERL_COMMIT}" <<'PY'
-import json
-import subprocess
+check_verl_gradient_sync() {
+    python3 - <<'PY'
 import sys
-from importlib.metadata import PackageNotFoundError, distribution
-from urllib.parse import unquote, urlsplit
+from dataclasses import fields
+from importlib.resources import files
 
-expected = sys.argv[1]
-try:
-    direct_url = json.loads(distribution("verl").read_text("direct_url.json") or "{}")
-except PackageNotFoundError:
-    direct_url = {}
-commit = direct_url.get("vcs_info", {}).get("commit_id")
-if direct_url.get("dir_info", {}).get("editable"):
-    url = urlsplit(direct_url["url"])
-    if url.scheme == "file":
-        try:
-            commit = subprocess.check_output(
-                ["git", "-C", unquote(url.path), "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-            ).strip()
-        except (OSError, subprocess.CalledProcessError):
-            commit = None
-if commit != expected:
-    sys.exit(f"This AVQA recipe requires verl commit {expected}; found {commit or 'unknown'}.")
+from omegaconf import OmegaConf
+
+from verl.workers.config import FSDPEngineConfig
+
+key = "use_no_sync_for_gradient_accumulation"
+config = OmegaConf.create(files("verl.trainer.config").joinpath("engine/fsdp.yaml").read_text())
+if key not in {field.name for field in fields(FSDPEngineConfig)} or key not in config:
+    sys.exit(f"This AVQA recipe requires verl FSDP support for {key}.")
 PY
 }
-if ! check_verl_commit; then
+if ! check_verl_gradient_sync; then
     uv pip install --python "$(command -v python3)" --no-deps --reinstall \
-        "verl @ git+https://github.com/verl-project/verl.git@${VERL_COMMIT}"
-    check_verl_commit
+        "verl @ git+https://github.com/verl-project/verl.git@a0feb78fe8229fde644aec3bbec20b5dc4583509"
+    check_verl_gradient_sync
 fi
 
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
