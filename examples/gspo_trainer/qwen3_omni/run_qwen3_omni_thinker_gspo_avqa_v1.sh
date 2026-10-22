@@ -27,18 +27,12 @@ fi
 # This recipe needs verl's native FSDP gradient-accumulation synchronization option.
 check_verl_gradient_sync() {
     python3 - <<'PY'
-import sys
-from dataclasses import fields
 from importlib.resources import files
 
 from omegaconf import OmegaConf
 
-from verl.workers.config import FSDPEngineConfig
-
-key = "use_no_sync_for_gradient_accumulation"
 config = OmegaConf.create(files("verl.trainer.config").joinpath("engine/fsdp.yaml").read_text())
-if key not in {field.name for field in fields(FSDPEngineConfig)} or key not in config:
-    sys.exit(f"This AVQA recipe requires verl FSDP support for {key}.")
+raise SystemExit("use_no_sync_for_gradient_accumulation" not in config)
 PY
 }
 if ! check_verl_gradient_sync; then
