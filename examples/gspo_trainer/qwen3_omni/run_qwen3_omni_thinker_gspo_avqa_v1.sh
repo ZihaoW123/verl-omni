@@ -2,7 +2,7 @@
 # Qwen3-Omni Thinker GSPO full-parameter AVQA training with the omni V1 trainer.
 # Modalities: text + image + audio -> text.
 # Hardware: A5 (8 × Ascend 950 96GB).
-set -xeuo pipefail
+set -x
 
 export CPATH=/usr/include${CPATH:+:$CPATH}
 export VLLM_ASCEND_ENABLE_NZ=0
@@ -17,11 +17,8 @@ fi
 
 if [[ "${DEVICE}" == "npu" ]]; then
     ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.1.0}
-    # CANN/ATB setup scripts may reference unset variables.
-    set +u
     source "${ASCEND_HOME_PATH}/set_env.sh"
     source "${ASCEND_HOME_PATH}/../nnal/atb/set_env.sh"
-    set -u
 fi
 
 # Setting actor_rollout_ref.actor.fsdp_config.use_no_sync_for_gradient_accumulation=false
