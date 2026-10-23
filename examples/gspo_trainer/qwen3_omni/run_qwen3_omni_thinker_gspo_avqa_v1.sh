@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Qwen3-Omni Thinker GSPO full-parameter AVQA training with the omni V1 trainer.
 # Modalities: text + image + audio -> text.
-# Hardware: Atlas 800T A3 (16 × Ascend 910C 64GB).
+# Hardware: A5 (8 × Ascend 950 96GB).
 set -xeuo pipefail
 
 export CPATH=/usr/include${CPATH:+:$CPATH}
@@ -16,7 +16,7 @@ if [[ "${DEVICE}" != "npu" && "${DEVICE}" != "gpu" ]]; then
 fi
 
 if [[ "${DEVICE}" == "npu" ]]; then
-    ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.0.0}
+    ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.1.0}
     # CANN/ATB setup scripts may reference unset variables.
     set +u
     source "${ASCEND_HOME_PATH}/set_env.sh"
@@ -24,22 +24,8 @@ if [[ "${DEVICE}" == "npu" ]]; then
     set -u
 fi
 
-# This recipe needs verl's native FSDP gradient-accumulation synchronization option.
-check_verl_gradient_sync() {
-    python3 - <<'PY'
-from importlib.resources import files
-
-from omegaconf import OmegaConf
-
-config = OmegaConf.create(files("verl.trainer.config").joinpath("engine/fsdp.yaml").read_text())
-raise SystemExit("use_no_sync_for_gradient_accumulation" not in config)
-PY
-}
-if ! check_verl_gradient_sync; then
-    uv pip install --python "$(command -v python3)" --no-deps --reinstall \
-        "verl @ git+https://github.com/verl-project/verl.git@a0feb78fe8229fde644aec3bbec20b5dc4583509"
-    check_verl_gradient_sync
-fi
+# Setting actor_rollout_ref.actor.fsdp_config.use_no_sync_for_gradient_accumulation=false
+# requires verl commit a0feb78fe8229fde644aec3bbec20b5dc4583509 or later.
 
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
 TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/avqa_r1_6k/train.parquet"}
